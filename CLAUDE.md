@@ -341,7 +341,11 @@ from the Web API for new apps, so every track is matched to Apple like
 everything else. Apple has no ISRC lookup (measured), so matching is the built
 packs first, then throttled `/search` once per artist, at `GAP_MS`, capped at
 `MAX_ARTIST_SEARCHES` (60), with a 60s back-off on 403. Cancelling keeps what
-was found. Difficulty inside the crate is Spotify `popularity`, cut 15/30/rest.
+was found. Difficulty inside the crate is Spotify `popularity`, cut 15/30/rest —
+and while Your Music is selected the picker offers a fourth band, **All**
+(`ALL`, id 0, key `total`), which is every song of every selected crate with no
+band filter. It disappears, and the choice falls back to Medium, the moment
+Your Music leaves the selection.
 
 Auth is Authorization Code + PKCE, no backend: verifier and state in
 `sessionStorage` for the redirect, tokens in `localStorage`. **Spotify refuses

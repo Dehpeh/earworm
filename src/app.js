@@ -339,14 +339,35 @@ function setAllPacks(on) {
   renderDifficulty();
 }
 
+/**
+ * "All" — no band filter. Only offered when Your Music is in the selection:
+ * difficulty on your own library is a ranking of your own habits, and the
+ * whole point of that crate is that you know it. It applies to every crate
+ * selected, so it is an explicit choice, not a side effect.
+ */
+const ALL = { id: 0, name: 'All', key: 'total', note: 'Every song, any difficulty' };
+
+function difficultyOptions() {
+  return state.packs.has(PERSONAL_ID) ? [...DIFFICULTIES, ALL] : DIFFICULTIES;
+}
+
+function difficultyMeta(id = state.difficulty) {
+  return id === ALL.id ? ALL : DIFFICULTIES.find((d) => d.id === id);
+}
+
 function countFor(diff) {
-  const key = DIFFICULTIES.find((d) => d.id === diff).key;
+  const key = difficultyMeta(diff).key;
   return [...state.packs].reduce((n, id) => n + (packMeta(id)?.[key] || 0), 0);
 }
 
 function renderDifficulty() {
+  // "All" only exists while Your Music is selected; fall back if it just left.
+  if (state.difficulty === ALL.id && !state.packs.has(PERSONAL_ID)) {
+    state.difficulty = 2;
+    store.set('difficulty', 2);
+  }
   el.difficulty.innerHTML = '';
-  for (const d of DIFFICULTIES) {
+  for (const d of difficultyOptions()) {
     const b = document.createElement('button');
     b.type = 'button';
     b.setAttribute('aria-pressed', String(state.difficulty === d.id));
@@ -633,7 +654,10 @@ async function startEndless() {
     el.status.textContent = 'Could not load the song data. Run node tools/build-packs.mjs.';
     return;
   }
-  state.pool = state.searchPool.filter((t) => t.difficulty === state.difficulty);
+  state.pool =
+    state.difficulty === ALL.id
+      ? state.searchPool
+      : state.searchPool.filter((t) => t.difficulty === state.difficulty);
   if (!state.pool.length) {
     el.status.textContent = 'No songs at this difficulty. Pick another genre or difficulty.';
     return;
@@ -1091,7 +1115,7 @@ function shareText() {
   const head =
     state.mode === 'daily'
       ? `Earworm ${state.daily?.date || todayKey()} · ${pack?.name || ''}`
-      : `Earworm · ${pack?.name || ''} · ${DIFFICULTIES.find((d) => d.id === state.difficulty).name}`;
+      : `Earworm · ${pack?.name || ''} · ${difficultyMeta().name}`;
   return `${head}\n${squares}\n${r.won ? `${TIERS[r.guesses.length - 1]}s` : 'X'}`;
 }
 
