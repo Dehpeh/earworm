@@ -316,9 +316,9 @@ function renderCrate() {
       `<span class="chip-name">${escapeHtml(p.name)}</span>` +
       `<span class="chip-count">${p.total.toLocaleString()}</span>`;
     b.addEventListener('click', () => {
+      // An empty selection is allowed; Start just greys out until it isn't.
       if (state.packs.has(p.id)) state.packs.delete(p.id);
       else state.packs.add(p.id);
-      if (state.packs.size === 0) state.packs.add(p.id); // never empty
       store.set('packs', [...state.packs]);
       b.setAttribute('aria-pressed', String(state.packs.has(p.id)));
       renderDifficulty();
@@ -329,12 +329,10 @@ function renderCrate() {
   renderPersonal();
 }
 
-/** Bulk select. `none` keeps one genre, because an empty selection cannot deal. */
+/** Bulk select. Clear really clears; Start is disabled until something is picked. */
 function setAllPacks(on) {
   state.packs.clear();
-  const playable = playablePacks();
-  if (on) for (const p of playable) state.packs.add(p.id);
-  else if (playable[0]) state.packs.add(playable[0].id);
+  if (on) for (const p of playablePacks()) state.packs.add(p.id);
   store.set('packs', [...state.packs]);
   renderCrate();
   renderDifficulty();
@@ -1455,12 +1453,9 @@ async function boot() {
     return;
   }
   mergePersonal();
-  // Drop any remembered genre the current build no longer ships.
+  // Drop any remembered genre the current build no longer ships. An empty
+  // selection is fine: the picker just keeps Start disabled until it isn't.
   for (const id of [...state.packs]) if (!packMeta(id)) state.packs.delete(id);
-  if (!state.packs.size) {
-    const first = playablePacks()[0];
-    if (first) state.packs.add(first.id);
-  }
   // Back from Spotify's consent screen? Finish that instead of landing home.
   if (await resumeSpotify()) return;
   renderHome();
