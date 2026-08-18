@@ -26,6 +26,24 @@ export async function loadIndex() {
 }
 
 /**
+ * A credit fit for a row: at most three names, no "(CV: …)" voice-actor tags.
+ *
+ * Anime and game credits can run to a dozen names — an idol-group cast list
+ * with the voice actor bracketed after every one — and the row is 40ch wide.
+ * The full credit still drives search and matching; this is only what is
+ * shown. "+N" says there is more without pretending it fits.
+ */
+export function shortArtist(a, max = 3) {
+  const clean = String(a || '').replace(/\s*[([]\s*(?:CV|cv|C\.V\.)\s*[:：][^)\]]*[)\]]/g, '');
+  const parts = clean
+    .split(/\s*(?:,|&|\band\b|;|、|・|\/)\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (parts.length <= max) return clean.trim();
+  return `${parts.slice(0, max).join(', ')} +${parts.length - max}`;
+}
+
+/**
  * Expand the on-disk shape into what the game uses.
  *
  * The stored keys are one letter each because the difference across ~3000
@@ -58,12 +76,13 @@ function expand(row, pack) {
     packCode: pack.code,
     title: row.t,
     artist: row.a,
+    artistShort: shortArtist(row.a),
     album: row.b || '',
     year: row.y || '',
     previewUrl: row.p,
     artwork: row.w || '',
     difficulty: row.d,
-    label: `${row.t} - ${row.a}`,
+    label: `${row.t} - ${shortArtist(row.a)}`,
     storeUrl: `https://music.apple.com/us/song/${row.i}`,
   };
 }

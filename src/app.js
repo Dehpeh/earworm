@@ -1091,7 +1091,7 @@ function finish(won, { silent = false, playable = true } = {}) {
     ? `Got it at ${TIERS[r.guesses.length - 1]}s${last?.via ? ` · knew it was ${last.via}` : ''}`
     : 'Out of guesses';
   el.revealTitle.textContent = t.title;
-  el.revealArtist.textContent = t.artist;
+  el.revealArtist.textContent = t.artistShort;
   // The media line is redundant when the album title already says it
   // ("Hades" · "Hades: Original Soundtrack").
   const media = t.media && !norm(t.album).includes(t.nm) ? t.media : '';
@@ -1169,7 +1169,7 @@ function renderSuggestions() {
       const side =
         t.kind === 'work'
           ? `${packMeta(t.packId)?.name || ''} · ${t.count} song${t.count === 1 ? '' : 's'}`
-          : t.media || t.artist;
+          : t.media || t.artistShort;
       return (
         `<li role="option" id="sug-${i}" aria-selected="${i === state.hi}" class="${cls.trim()}"` +
         ` data-i="${i}"><strong>${escapeHtml(main)}</strong><span>${escapeHtml(side)}</span></li>`
