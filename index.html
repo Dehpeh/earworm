@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Earworm — name the song from 0.1 seconds</title>
+<meta name="description" content="A Songless-style music guessing game across 24 genre packs, from city pop to amapiano.">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎧</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <h1 class="logo">ear<span>worm</span></h1>
+  <div class="modes" role="group" aria-label="Game mode">
+    <button id="mode-daily" class="mode" type="button" aria-pressed="true">Daily</button>
+    <button id="mode-endless" class="mode" type="button" aria-pressed="false">Endless</button>
+  </div>
+  <div class="topbar-actions">
+    <button id="open-help" class="icon-btn" type="button" aria-label="How to play">?</button>
+    <button id="open-stats" class="icon-btn" type="button" aria-label="Statistics">▤</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- ------------------------------------------------------------- setup -->
+  <section id="setup">
+    <p class="lede">
+      Pick your genres. You get <span id="tier-legend"></span> of the intro —
+      every skip or wrong guess buys you more.
+    </p>
+    <div id="pack-grid" class="pack-grid"></div>
+    <div class="setup-foot">
+      <span id="pack-summary" class="muted"></span>
+      <button id="start" class="primary" type="button">Play</button>
+    </div>
+  </section>
+
+  <!-- -------------------------------------------------------------- game -->
+  <section id="game" hidden>
+    <p id="status" class="status" hidden></p>
+
+    <div class="player">
+      <button id="play" class="play" type="button" aria-label="Play snippet">
+        <svg viewBox="0 0 24 24" class="ico-play" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+        <svg viewBox="0 0 24 24" class="ico-stop" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>
+      </button>
+      <div class="track">
+        <div class="rail">
+          <div id="unlocked" class="unlocked"></div>
+          <div id="ticks"></div>
+          <div id="playhead" class="playhead"></div>
+        </div>
+        <div class="rail-labels">
+          <span id="snippet-label">0.1s</span>
+          <span class="muted">16s</span>
+        </div>
+      </div>
+    </div>
+
+    <ol id="guesses" class="guesses"></ol>
+
+    <div class="guess-wrap">
+      <input id="guess" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+             placeholder="Know it? Start typing a title or artist…"
+             role="combobox" aria-expanded="false" aria-controls="suggest" aria-autocomplete="list">
+      <ul id="suggest" class="suggest" role="listbox" hidden></ul>
+    </div>
+
+    <div class="controls">
+      <button id="skip" class="ghost" type="button">Skip</button>
+      <span id="remaining" class="muted"></span>
+      <button id="submit" class="primary" type="button" disabled>Guess</button>
+    </div>
+
+    <!-- ----------------------------------------------------------- reveal -->
+    <div id="reveal" class="reveal" hidden>
+      <p id="reveal-verdict" class="verdict"></p>
+      <div class="reveal-card">
+        <img id="reveal-art" alt="" width="96" height="96">
+        <div class="reveal-meta">
+          <strong id="reveal-title"></strong>
+          <span id="reveal-artist"></span>
+          <span id="reveal-album" class="muted"></span>
+          <span id="reveal-pack" class="chip"></span>
+        </div>
+      </div>
+      <div class="reveal-actions">
+        <button id="share" class="primary" type="button">Share</button>
+        <button id="next" class="ghost" type="button">Next song</button>
+        <a id="reveal-link" class="ghost link" target="_blank" rel="noopener">Open in Apple Music</a>
+      </div>
+      <p id="daily-note" class="muted small" hidden>
+        That's today's daily for these packs. Switch to Endless to keep going.
+      </p>
+    </div>
+
+    <button id="change-packs" class="linkish" type="button">← Change packs</button>
+  </section>
+</main>
+
+<!-- ------------------------------------------------------------- dialogs -->
+<dialog id="help-dialog">
+  <h2>How to play</h2>
+  <ol class="help-list">
+    <li>You hear the first <strong>0.1 seconds</strong> of a song.</li>
+    <li>Guess the title, or skip. Either way the snippet grows:
+        0.1s → 0.5s → 1s → 2s → 4s → 8s → 16s.</li>
+    <li>Seven tries. The faster you get it, the better the share grid looks.</li>
+  </ol>
+  <p class="muted small">
+    Snippets come from Apple Music's public 30-second previews, so the clip
+    usually starts partway into the song rather than at the very first note.
+  </p>
+  <button data-close class="primary" type="button">Got it</button>
+</dialog>
+
+<dialog id="stats-dialog">
+  <h2>Statistics</h2>
+  <div class="stat-grid">
+    <div><strong id="stat-played">0</strong><span>Played</span></div>
+    <div><strong id="stat-win">—</strong><span>Win %</span></div>
+    <div><strong id="stat-streak">0</strong><span>Streak</span></div>
+    <div><strong id="stat-best">0</strong><span>Best</span></div>
+  </div>
+  <h3>Won at</h3>
+  <div id="stat-dist" class="dist"></div>
+  <button data-close class="primary" type="button">Close</button>
+</dialog>
+
+<script type="module" src="src/app.js"></script>
+</body>
+</html>
