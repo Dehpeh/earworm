@@ -1,0 +1,5 @@
+# Dev-only and build-time files. The deployed game is the static site alone.
+tools/
+server.mjs
+CLAUDE.md
+.claude/
