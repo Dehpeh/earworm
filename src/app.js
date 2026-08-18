@@ -4,6 +4,7 @@ import {
   DIFFICULTIES,
   PERSONAL_ID,
   personalPackMeta,
+  personalPackState,
   savePersonalPack,
   clearPersonalPack,
 } from './catalog.js';
@@ -439,15 +440,19 @@ function renderPersonal() {
     const when = meta.builtAt ? new Date(meta.builtAt).toLocaleDateString() : '';
     el.personalMeta.textContent = `${meta.total.toLocaleString()} songs${when ? ` · ${when}` : ''}`;
     const s = meta.source || {};
-    el.personalBlurb.textContent =
-      `Built from your Spotify top tracks and liked songs` +
-      (s.unmatched ? `; ${s.unmatched} had no Apple preview and were left out.` : '.');
+    const left = s.artistsLeft || 0;
+    el.spotifyRefresh.textContent = left ? 'Continue' : 'Refresh';
+    el.personalBlurb.textContent = left
+      ? `Playable now. ${left} artist${left === 1 ? '' : 's'} still to search on Apple — Continue picks up where it stopped (about ${Math.ceil((left * 4) / 60)} min).`
+      : `Built from your Spotify top tracks and liked songs` +
+        (s.unmatched ? `; ${s.unmatched} had no Apple preview and were left out.` : '.') +
+        ' Refresh picks up new likes.';
     return;
   }
   el.personalMeta.textContent = '';
   el.personalBlurb.textContent = spotify.redirectUnsupported()
     ? `Spotify only redirects back to https, or 127.0.0.1 for local work — open this page at http://127.0.0.1:${location.port || 80}/ to connect.`
-    : 'Add a crate of your own music: your top tracks and liked songs, matched to previews. Takes a few minutes the first time.';
+    : 'Add a crate of your own music: your top tracks and up to 1,000 liked songs, matched to previews. Playable within a minute; a big library finishes over a few sittings, and you can stop any time.';
 }
 
 /**
@@ -478,26 +483,36 @@ async function importSpotify() {
     if (!wanted.length) throw new Error('Spotify returned no tracks for this account.');
     report({ pct: LIB_SHARE, label: `Matching ${wanted.length} songs to previews` });
     const local = await loadTracks(state.index.filter((p) => !p.personal));
+    const source = (r) => ({
+      wanted: wanted.length,
+      unmatched: r.unmatched ?? null,
+      artistsLeft: r.artistsLeft ?? 0,
+      aborted: Boolean(r.aborted),
+    });
     const result = await spotify.matchToApple(wanted, local, {
+      prior: personalPackState(),
       onProgress: (p) => {
-        const frac = p.phase === 'local' ? 0 : p.total ? p.done / p.total : 0;
+        const frac = p.phase === 'local' ? 0 : p.total ? p.done / p.total : 1;
         report({
           pct: LIB_SHARE + frac * (100 - LIB_SHARE),
           matched: p.matched,
           label: p.note?.startsWith('Apple is rate-limiting')
             ? p.note
+            : p.phase === 'apple' && p.total
+            ? `Searching Apple · ${p.done} of ${p.total} artists`
             : `Matching ${wanted.length} songs to previews`,
         });
+      },
+      // Persist after every artist: Stop, a closed tab or a crash all keep
+      // what was found, and the next Refresh continues from here.
+      onCheckpoint: (c) => {
+        savePersonalPack(c.rows, source({ artistsLeft: c.artistsLeft, aborted: true }), c.searched);
+        mergePersonal();
       },
       signal: controller.signal,
     });
     if (!result.rows.length) throw new Error('None of your songs could be matched to a preview.');
-    savePersonalPack(result.rows, {
-      wanted: wanted.length,
-      unmatched: result.unmatched,
-      skipped: result.skipped,
-      aborted: result.aborted,
-    });
+    savePersonalPack(result.rows, source(result), result.searched);
     mergePersonal();
     state.packs.add(PERSONAL_ID);
     store.set('packs', [...state.packs]);

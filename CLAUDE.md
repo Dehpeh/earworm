@@ -335,13 +335,26 @@ an index entry (`personal: true`, Spotify green, id `spotify`), and
 picker chips, the daily tiles, counts, reveal colour and share text all pick it
 up with no special casing.
 
-What Spotify is *for*: top tracks (three windows) and liked songs (newest 200),
-deduped, top tracks first. What it is not for: audio — preview URLs are gone
-from the Web API for new apps, so every track is matched to Apple like
+What Spotify is *for*: top tracks (three windows) and liked songs (newest
+1,000), deduped, top tracks first. What it is not for: audio — preview URLs are
+gone from the Web API for new apps, so every track is matched to Apple like
 everything else. Apple has no ISRC lookup (measured), so matching is the built
-packs first, then throttled `/search` once per artist, at `GAP_MS`, capped at
-`MAX_ARTIST_SEARCHES` (60), with a 60s back-off on 403. Cancelling keeps what
-was found. Difficulty inside the crate is Spotify `popularity`, cut 15/30/rest —
+packs first, then throttled `/search` once per artist, at `GAP_MS`, with a 60s
+back-off on 403.
+
+**The import is resumable, by design, because a big library cannot finish in
+one sitting.** One `/search` per artist at 15/min means a 400-artist library is
+~25 minutes. So there is no artist cap; instead `matchToApple()` fires
+`onCheckpoint` after every artist and the app persists rows *and* the
+`searched` map (artist key → how many of their tracks were wanted) each time.
+Stop, a closed tab or a crash keep everything found; the crate is playable at
+any size; and the next run passes the saved state back as `prior`, so it only
+searches artists it has not seen — or has seen with fewer songs, which is how
+new likes by a known artist get picked up. The picker says "N artists still to
+search" and the button reads Continue until it is done. A rate-limited artist
+that never answered is *not* marked searched, so it is retried next time.
+Difficulty inside the crate is Spotify `popularity` (kept on the row so a
+larger import re-cuts without asking Spotify again), cut 15/30/rest —
 and while Your Music is selected the picker offers a fourth band, **All**
 (`ALL`, id 0, key `total`), which is every song of every selected crate with no
 band filter. It disappears, and the choice falls back to Medium, the moment

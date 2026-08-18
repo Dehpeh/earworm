@@ -122,12 +122,21 @@ export function personalPackMeta() {
   };
 }
 
-/** Store a freshly built personal pack (stored-shape rows) and drop the cache. */
-export function savePersonalPack(rows, source) {
+/**
+ * What an earlier import left behind, for the next one to build on: its rows
+ * (with Spotify popularity kept) and which artists it already searched.
+ */
+export function personalPackState() {
+  const data = readPersonalPack();
+  return data ? { rows: data.tracks || [], searched: data.searched || {} } : null;
+}
+
+/** Store the personal pack (stored-shape rows) and drop the cache. */
+export function savePersonalPack(rows, source, searched = {}) {
   cache.delete(PERSONAL_ID);
   localStorage.setItem(
     PERSONAL_KEY,
-    JSON.stringify({ id: PERSONAL_ID, builtAt: Date.now(), source, tracks: rows })
+    JSON.stringify({ id: PERSONAL_ID, builtAt: Date.now(), source, searched, tracks: rows })
   );
 }
 

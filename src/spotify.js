@@ -47,10 +47,8 @@ const SS_STATE = 'earworm.spotify.state';
 export const GAP_MS = 4000;
 /** On a 403, wait this long before trying again. The penalty box is minutes. */
 const COOLDOWN_MS = 60_000;
-/** Cap on distinct artists searched on Apple, so an import cannot run for an hour. */
-const MAX_ARTIST_SEARCHES = 60;
 /** How many liked songs to pull, newest first. Top tracks come on top of this. */
-const MAX_SAVED = 200;
+const MAX_SAVED = 1000;
 /** Calls fetchLibrary makes at most (3 top windows + saved pages), for progress. */
 export const LIBRARY_STEPS = 3 + MAX_SAVED / 50;
 
@@ -281,17 +279,31 @@ function sameSong(want, r) {
   return !!a && !!b && (a === b || a.includes(b) || b.includes(a));
 }
 
+const leadOf = (a) => String(a).split(/\s*[,&]\s*|\s+(?:feat|ft|featuring|with|x)\.?\s+/i)[0];
+
 /**
  * Turn Spotify tracks into stored-shape rows with Apple previews.
  *
  * `local` is the union of the built packs, already expanded, used as a free
- * first pass. `onProgress({phase, done, total, matched, note})` reports as it
- * goes; `signal` aborts between requests. Resolves with the rows found so far
- * even when aborted, so a cancelled import still yields a playable crate.
+ * first pass. `prior` is what an earlier import saved — its rows and the
+ * artists it already searched — so a second run only does new work: the
+ * import is meant to be spread over sittings, not finished in one. `onProgress`
+ * reports as it goes; `onCheckpoint({rows, searched})` fires after every artist
+ * so the caller can persist, which is what makes Stop and a closed tab cost
+ * nothing; `signal` aborts between requests. Resolves with everything found so
+ * far even when aborted, so a cancelled import still yields a playable crate.
  */
-export async function matchToApple(wanted, local, { onProgress = () => {}, signal } = {}) {
+export async function matchToApple(
+  wanted,
+  local,
+  { prior = null, onProgress = () => {}, onCheckpoint = () => {}, signal } = {}
+) {
   const rows = new Map(); // apple trackId → row
   const done = new Set(); // spotify id
+  // artist key → how many of their tracks were wanted when last searched. An
+  // artist is searched again only if more of their songs have shown up since.
+  const searched = { ...(prior?.searched || {}) };
+  for (const r of prior?.rows || []) rows.set(String(r.i), r);
   const sleep = (ms) =>
     new Promise((resolve, reject) => {
       const id = setTimeout(resolve, ms);
@@ -300,53 +312,44 @@ export async function matchToApple(wanted, local, { onProgress = () => {}, signa
       });
     });
 
-  // 1. The built packs. No network at all.
+  // 1. The built packs and the previous import. No network at all.
   const byKey = new Map();
   for (const t of local) {
-    const k = key(t.title, t.artist.split(/\s*[,&]\s*|\s+(?:feat|ft|featuring|with|x)\.?\s+/i)[0]);
-    if (!byKey.has(k)) byKey.set(k, t);
+    const k = key(t.title, leadOf(t.artist));
+    if (!byKey.has(k)) byKey.set(k, { i: Number(t.id), t: t.title, a: t.artist, b: t.album, y: t.year, p: t.previewUrl, w: t.artwork });
+  }
+  for (const r of rows.values()) {
+    const k = key(r.t, leadOf(r.a));
+    if (!byKey.has(k)) byKey.set(k, r);
   }
   for (const w of wanted) {
     const hit = byKey.get(key(w.title, w.artist));
     if (hit) {
       done.add(w.sid);
-      rows.set(hit.id, {
-        i: Number(hit.id),
-        t: hit.title,
-        a: hit.artist,
-        b: hit.album,
-        y: hit.year,
-        p: hit.previewUrl,
-        w: hit.artwork,
-        pop: w.popularity,
-      });
+      rows.set(String(hit.i), { ...hit, pop: w.popularity });
     }
   }
-  onProgress({ phase: 'local', done: done.size, total: wanted.length, matched: rows.size });
+  onProgress({ phase: 'local', done: 0, total: 0, matched: rows.size });
 
   // 2. Apple, one throttled search per artist, most-wanted artists first.
   const byArtist = new Map();
   for (const w of wanted) {
     if (done.has(w.sid)) continue;
     const a = norm(w.artist);
-    if (!byArtist.has(a)) byArtist.set(a, { name: w.artist, tracks: [] });
+    if (!byArtist.has(a)) byArtist.set(a, { key: a, name: w.artist, tracks: [] });
     byArtist.get(a).tracks.push(w);
   }
-  const artists = [...byArtist.values()].sort((a, b) => b.tracks.length - a.tracks.length);
-  const searchable = artists.slice(0, MAX_ARTIST_SEARCHES);
-  const skipped = artists.length - searchable.length;
-  let searched = 0;
+  const searchable = [...byArtist.values()]
+    .filter((a) => !(a.key in searched) || a.tracks.length > searched[a.key])
+    .sort((a, b) => b.tracks.length - a.tracks.length);
+  let n = 0;
+  const report = (note) =>
+    onProgress({ phase: 'apple', done: n, total: searchable.length, matched: rows.size, note });
 
   try {
     for (const artist of searchable) {
       if (signal?.aborted) break;
-      onProgress({
-        phase: 'apple',
-        done: searched,
-        total: searchable.length,
-        matched: rows.size,
-        note: `Searching Apple for ${artist.name}`,
-      });
+      report(`Searching Apple for ${artist.name}`);
       let results = null;
       for (let attempt = 0; results === null && attempt < 3; attempt++) {
         try {
@@ -357,26 +360,26 @@ export async function matchToApple(wanted, local, { onProgress = () => {}, signa
             break;
           }
           const wait = COOLDOWN_MS * (attempt + 1);
-          onProgress({
-            phase: 'apple',
-            done: searched,
-            total: searchable.length,
-            matched: rows.size,
-            note: `Apple is rate-limiting — waiting ${wait / 1000}s`,
-          });
+          report(`Apple is rate-limiting — waiting ${wait / 1000}s`);
           await sleep(wait);
         }
       }
-      for (const w of artist.tracks) {
-        const hit = (results || []).filter(usable).find((r) => sameSong(w, r));
-        if (hit) {
-          done.add(w.sid);
-          rows.set(hit.trackId, { ...toRow(hit), pop: w.popularity });
+      // A rate-limited artist that never answered stays unsearched, so the
+      // next run tries again. A real (empty) answer is remembered.
+      if (results !== null) {
+        for (const w of artist.tracks) {
+          const hit = results.filter(usable).find((r) => sameSong(w, r));
+          if (hit) {
+            done.add(w.sid);
+            rows.set(String(hit.trackId), { ...toRow(hit), pop: w.popularity });
+          }
         }
+        searched[artist.key] = artist.tracks.length;
       }
-      searched++;
-      onProgress({ phase: 'apple', done: searched, total: searchable.length, matched: rows.size });
-      if (searched < searchable.length) await sleep(GAP_MS);
+      n++;
+      report();
+      onCheckpoint({ rows: band([...rows.values()]), searched, artistsLeft: searchable.length - n });
+      if (n < searchable.length) await sleep(GAP_MS);
     }
   } catch (e) {
     // A cancelled import keeps what it found. Anything else is a real error.
@@ -385,8 +388,9 @@ export async function matchToApple(wanted, local, { onProgress = () => {}, signa
 
   return {
     rows: band([...rows.values()]),
+    searched,
     unmatched: wanted.length - done.size,
-    skipped,
+    artistsLeft: searchable.length - n,
     aborted: Boolean(signal?.aborted),
   };
 }
@@ -394,11 +398,12 @@ export async function matchToApple(wanted, local, { onProgress = () => {}, signa
 /**
  * Difficulty inside your own crate is Spotify's popularity, cut the same way
  * as the built packs (15% / 30% / rest). It hardly matters — you know your own
- * music — but the picker and the daily need a band on every track.
+ * music — but the picker and the daily need a band on every track. `pop` is
+ * kept on the row so a later, larger import can re-cut without asking Spotify.
  */
 function band(rows) {
   rows.sort((a, b) => (b.pop ?? 0) - (a.pop ?? 0));
   const easyEnd = Math.ceil(rows.length * 0.15);
   const mediumEnd = Math.ceil(rows.length * 0.45);
-  return rows.map(({ pop, ...r }, i) => ({ ...r, d: i < easyEnd ? 1 : i < mediumEnd ? 2 : 3 }));
+  return rows.map((r, i) => ({ ...r, d: i < easyEnd ? 1 : i < mediumEnd ? 2 : 3 }));
 }
