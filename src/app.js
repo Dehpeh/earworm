@@ -341,15 +341,17 @@ function setAllPacks(on) {
 }
 
 /**
- * "All" — no band filter. Only offered when Your Music is in the selection:
- * difficulty on your own library is a ranking of your own habits, and the
- * whole point of that crate is that you know it. It applies to every crate
- * selected, so it is an explicit choice, not a side effect.
+ * "All" — no band filter. Only offered when Your Music is the *only* crate
+ * selected: difficulty on your own library is a ranking of your own habits,
+ * and the whole point of that crate is that you know it. As soon as another
+ * crate joins, the bands are back and mean what they mean everywhere else.
  */
 const ALL = { id: 0, name: 'All', key: 'total', note: 'Every song, any difficulty' };
 
+const onlyPersonal = () => state.packs.size === 1 && state.packs.has(PERSONAL_ID);
+
 function difficultyOptions() {
-  return state.packs.has(PERSONAL_ID) ? [...DIFFICULTIES, ALL] : DIFFICULTIES;
+  return onlyPersonal() ? [...DIFFICULTIES, ALL] : DIFFICULTIES;
 }
 
 function difficultyMeta(id = state.difficulty) {
@@ -362,8 +364,8 @@ function countFor(diff) {
 }
 
 function renderDifficulty() {
-  // "All" only exists while Your Music is selected; fall back if it just left.
-  if (state.difficulty === ALL.id && !state.packs.has(PERSONAL_ID)) {
+  // "All" only exists while Your Music is alone; fall back if that changed.
+  if (state.difficulty === ALL.id && !onlyPersonal()) {
     state.difficulty = 2;
     store.set('difficulty', 2);
   }
