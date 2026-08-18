@@ -1,7 +1,16 @@
-import { loadIndex, loadTracks, DIFFICULTIES } from './catalog.js';
-import { norm, lookupIds } from './itunes.js';
+import {
+  loadIndex,
+  loadTracks,
+  DIFFICULTIES,
+  PERSONAL_ID,
+  personalPackMeta,
+  savePersonalPack,
+  clearPersonalPack,
+} from './catalog.js';
+import { norm, artistMatches, lookupIds } from './itunes.js';
 import { SnippetPlayer } from './audio.js';
 import { Sfx } from './sfx.js';
+import * as spotify from './spotify.js';
 
 /** How much of the clip you get to hear at each stage. */
 const TIERS = [0.1, 0.5, 1, 2, 4, 8, 16];
@@ -113,6 +122,8 @@ const state = {
   daily: null,
   /** The date the home screen was last drawn for, to catch rollover. */
   homeDate: null,
+  /** A running Spotify import: { controller, progress }. */
+  importing: null,
   pending: null,
   hi: -1,
   matches: [],
@@ -261,8 +272,7 @@ function renderHome() {
 function miniGrid(guesses) {
   return TIERS.map((_, i) => {
     const g = guesses[i];
-    const k = !g ? '' : g.kind === 'correct' ? ' ok' : g.kind === 'skip' ? ' skip' : ' bad';
-    return `<i class="cell${k}"></i>`;
+    return `<i class="cell${g ? ` ${g.kind}` : ''}"></i>`;
   }).join('');
 }
 
@@ -315,6 +325,7 @@ function renderCrate() {
     el.packChips.append(b);
   });
   renderSummary();
+  renderPersonal();
 }
 
 /** Bulk select. `none` keeps one genre, because an empty selection cannot deal. */
@@ -357,8 +368,151 @@ function renderDifficulty() {
 function renderSummary() {
   const n = countFor(state.difficulty);
   const packs = state.packs.size;
-  el.packSummary.textContent = `${packs} genre${packs === 1 ? '' : 's'} · ${n.toLocaleString()} songs in play`;
+  el.packSummary.textContent = `${packs} crate${packs === 1 ? '' : 's'} · ${n.toLocaleString()} song${n === 1 ? '' : 's'} in play`;
   el.startBtn.disabled = n === 0;
+}
+
+/* ------------------------------------------------------------ your music */
+
+/**
+ * Put the personal pack into the index (or take it out) so every screen that
+ * iterates packs — picker chips, daily tiles, counts — sees it with no special
+ * casing. It sits last: the built crates are the game, this is yours.
+ */
+function mergePersonal() {
+  state.index = state.index.filter((p) => !p.personal);
+  const meta = personalPackMeta();
+  if (meta) state.index.push(meta);
+  else state.packs.delete(PERSONAL_ID);
+}
+
+function renderPersonal() {
+  const meta = packMeta(PERSONAL_ID);
+  const busy = state.importing;
+  const configured = spotify.configured();
+
+  el.spotifyConnect.hidden = busy || !configured || Boolean(meta);
+  el.spotifyRefresh.hidden = busy || !meta || !configured;
+  el.spotifyRemove.hidden = busy || !meta;
+  el.spotifyCancel.hidden = !busy;
+  el.personalProgress.hidden = !busy;
+
+  if (!configured && !meta) {
+    el.personalMeta.textContent = '';
+    el.personalBlurb.textContent =
+      'Not set up on this deployment. Add a Spotify client id in src/config.js to enable it.';
+    return;
+  }
+  if (busy) {
+    const p = busy.progress || {};
+    el.personalMeta.textContent = p.matched != null ? `${p.matched} matched` : '';
+    el.personalBlurb.textContent = p.note || p.status || 'Working';
+    const frac = p.total ? p.done / p.total : 0;
+    el.personalBar.style.width = `${Math.round(frac * 100)}%`;
+    return;
+  }
+  if (meta) {
+    const when = meta.builtAt ? new Date(meta.builtAt).toLocaleDateString() : '';
+    el.personalMeta.textContent = `${meta.total.toLocaleString()} songs${when ? ` · ${when}` : ''}`;
+    const s = meta.source || {};
+    el.personalBlurb.textContent =
+      `Built from your Spotify top tracks and liked songs` +
+      (s.unmatched ? `; ${s.unmatched} had no Apple preview and were left out.` : '.');
+    return;
+  }
+  el.personalMeta.textContent = '';
+  el.personalBlurb.textContent = spotify.redirectUnsupported()
+    ? `Spotify only redirects back to https, or 127.0.0.1 for local work — open this page at http://127.0.0.1:${location.port || 80}/ to connect.`
+    : 'Add a crate of your own music: your top tracks and liked songs, matched to previews. Takes a few minutes the first time.';
+}
+
+/**
+ * The import. Reads the library from Spotify, matches it to Apple previews
+ * (built packs first, then a throttled artist search), and stores the result
+ * as a pack. Cancelling keeps what has been found so far.
+ */
+async function importSpotify() {
+  if (state.importing) return;
+  const controller = new AbortController();
+  state.importing = { controller, progress: { status: 'Connecting to Spotify' } };
+  renderPersonal();
+  const report = (progress) => {
+    if (!state.importing) return;
+    state.importing.progress = { ...state.importing.progress, ...progress };
+    renderPersonal();
+  };
+  try {
+    const wanted = await spotify.fetchLibrary((status) => report({ status, note: status }));
+    if (!wanted.length) throw new Error('Spotify returned no tracks for this account.');
+    report({ note: `Matching ${wanted.length} songs`, done: 0, total: wanted.length });
+    const local = await loadTracks(state.index.filter((p) => !p.personal));
+    const result = await spotify.matchToApple(wanted, local, {
+      onProgress: (p) => report({ ...p, note: p.note || (p.phase === 'local' ? 'Checked the built crates' : '') }),
+      signal: controller.signal,
+    });
+    if (!result.rows.length) throw new Error('None of your songs could be matched to a preview.');
+    savePersonalPack(result.rows, {
+      wanted: wanted.length,
+      unmatched: result.unmatched,
+      skipped: result.skipped,
+      aborted: result.aborted,
+    });
+    mergePersonal();
+    state.packs.add(PERSONAL_ID);
+    store.set('packs', [...state.packs]);
+  } catch (e) {
+    state.importing = null;
+    renderPersonal();
+    el.personalBlurb.textContent = e.message || 'The import failed.';
+    return;
+  }
+  state.importing = null;
+  renderCrate();
+  renderDifficulty();
+  renderPersonal();
+}
+
+function bindPersonal() {
+  el.spotifyConnect.addEventListener('click', () => {
+    if (spotify.connected()) importSpotify();
+    else spotify.connect();
+  });
+  el.spotifyRefresh.addEventListener('click', () => {
+    if (spotify.connected()) importSpotify();
+    else spotify.connect();
+  });
+  el.spotifyRemove.addEventListener('click', () => {
+    clearPersonalPack();
+    spotify.disconnect();
+    mergePersonal();
+    store.set('packs', [...state.packs]);
+    renderCrate();
+    renderDifficulty();
+    renderPersonal();
+  });
+  el.spotifyCancel.addEventListener('click', () => state.importing?.controller.abort());
+}
+
+/** Spotify sent the browser back with a code: finish sign-in and import. */
+async function resumeSpotify() {
+  let handled = false;
+  try {
+    handled = await spotify.handleRedirect();
+  } catch (e) {
+    history.replaceState(null, '', location.pathname);
+    renderCrate();
+    renderDifficulty();
+    show('crate');
+    el.personalBlurb.textContent = e.message;
+    return true;
+  }
+  if (!handled) return false;
+  history.replaceState(null, '', location.pathname);
+  renderCrate();
+  renderDifficulty();
+  show('crate');
+  importSpotify();
+  return true;
 }
 
 /* --------------------------------------------------------------- round setup */
@@ -733,7 +887,15 @@ function renderGuesses() {
     const row = document.createElement('li');
     row.className =
       'guess-row' + (g ? ` ${g.kind}` : '') + (!g && i === r.tier && !r.done ? ' active' : '');
-    const mark = g ? (g.kind === 'correct' ? '+' : g.kind === 'skip' ? '>' : '×') : '';
+    const mark = g
+      ? g.kind === 'correct'
+        ? '+'
+        : g.kind === 'skip'
+        ? '>'
+        : g.kind === 'close'
+        ? '~'
+        : '×'
+      : '';
     const text = g
       ? g.kind === 'skip'
         ? 'Skipped'
@@ -769,6 +931,7 @@ function advance(entry) {
     return;
   }
   if (entry.kind === 'skip') sfx.skip();
+  else if (entry.kind === 'close') sfx.close();
   else sfx.wrong();
   renderGuesses();
   renderLadder();
@@ -811,7 +974,10 @@ function submitGuess() {
     finish(true);
     return;
   }
-  advance({ kind: 'wrong', label });
+  // Right artist, wrong song: still a miss, but a warm one. Works have no
+  // artist, so a work pick is either right or plainly wrong.
+  const close = !isWork && artistMatches(pick.artist, r.track.artist);
+  advance({ kind: close ? 'close' : 'wrong', label });
 }
 
 function skip() {
@@ -898,11 +1064,9 @@ function finish(won, { silent = false, playable = true } = {}) {
 
 function shareText() {
   const r = state.round;
-  const squares = TIERS.map((_, i) => {
-    const g = r.guesses[i];
-    if (!g) return '⬜';
-    return g.kind === 'correct' ? '\u{1f7e8}' : g.kind === 'skip' ? '⬛' : '\u{1f7e5}';
-  }).join('');
+  // Green got it, yellow right artist, red wrong, black skipped, white unused.
+  const SQUARE = { correct: '\u{1f7e9}', close: '\u{1f7e8}', wrong: '\u{1f7e5}', skip: '⬛' };
+  const squares = TIERS.map((_, i) => SQUARE[r.guesses[i]?.kind] || '⬜').join('');
   const pack = packMeta(r.track.packId);
   const head =
     state.mode === 'daily'
@@ -1024,6 +1188,14 @@ function bind() {
     pickEndless: $('#pick-endless'),
     endlessCount: $('#endless-count'),
     packChips: $('#pack-chips'),
+    personalMeta: $('#personal-meta'),
+    personalBlurb: $('#personal-blurb'),
+    personalProgress: $('#personal-progress'),
+    personalBar: $('#personal-bar'),
+    spotifyConnect: $('#spotify-connect'),
+    spotifyRefresh: $('#spotify-refresh'),
+    spotifyRemove: $('#spotify-remove'),
+    spotifyCancel: $('#spotify-cancel'),
     difficulty: $('#difficulty'),
     packSummary: $('#pack-summary'),
     startBtn: $('#start'),
@@ -1190,6 +1362,8 @@ function bind() {
     el.viewBoard.hidden = true; // pointless once the board is already visible
   });
 
+  bindPersonal();
+
   // Day rollover while the tab is open. See rollover().
   armMidnight();
   document.addEventListener('visibilitychange', () => {
@@ -1217,12 +1391,15 @@ async function boot() {
       '<p class="status">Song data missing. Run <code>node tools/build-packs.mjs</code>.</p>';
     return;
   }
+  mergePersonal();
   // Drop any remembered genre the current build no longer ships.
   for (const id of [...state.packs]) if (!packMeta(id)) state.packs.delete(id);
   if (!state.packs.size) {
     const first = playablePacks()[0];
     if (first) state.packs.add(first.id);
   }
+  // Back from Spotify's consent screen? Finish that instead of landing home.
+  if (await resumeSpotify()) return;
   renderHome();
   show('home');
 }

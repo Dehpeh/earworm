@@ -153,6 +153,23 @@ async function getJson(url, { fetchImpl = fetch, retries = 2 } = {}) {
   }
 }
 
+const SEARCH = 'https://itunes.apple.com/search';
+
+/**
+ * One throttled /search. Used at build time by the pack builder, and by the
+ * "Your Music" import in the browser, which is the only runtime path allowed
+ * to touch it — a one-off, paced at GAP_MS, never during a round. Throws
+ * RateLimited on 403 so the caller can back off rather than cache a miss.
+ */
+export async function searchSongs(term, { attribute, limit = 200, country = 'US', ...opts } = {}) {
+  const url =
+    `${SEARCH}?term=${encodeURIComponent(term)}` +
+    (attribute ? `&attribute=${attribute}` : '') +
+    `&media=music&entity=song&limit=${limit}&country=${country}`;
+  const data = await getJson(url, { retries: 0, ...opts });
+  return (data?.results || []).filter((r) => r.kind === 'song');
+}
+
 /**
  * Batch lookup by trackId. Unthrottled in practice, so this re-mints the whole
  * catalog's preview URLs in a handful of calls at build time, and re-mints a

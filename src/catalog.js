@@ -70,12 +70,70 @@ function expand(row, pack) {
 
 async function loadPack(pack) {
   if (cache.has(pack.id)) return cache.get(pack.id);
-  const res = await fetch(new URL(`${pack.id}.json`, BASE), { cache: 'no-cache' });
-  if (!res.ok) throw new Error(`pack ${pack.id} ${res.status}`);
-  const data = await res.json();
+  let data;
+  if (pack.personal) {
+    data = readPersonalPack() || { tracks: [] };
+  } else {
+    const res = await fetch(new URL(`${pack.id}.json`, BASE), { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`pack ${pack.id} ${res.status}`);
+    data = await res.json();
+  }
   const tracks = (data.tracks || []).filter((r) => r.p).map((r) => expand(r, pack));
   cache.set(pack.id, tracks);
   return tracks;
+}
+
+/* ---------------------------------------------------------- personal pack */
+
+// "Your Music" is a pack built in the browser from a connected Spotify
+// account, matched to Apple previews and kept in localStorage. It uses the
+// same stored shape as the built packs on purpose: one expand(), one loader,
+// and every screen that iterates packs picks it up with no special casing.
+
+export const PERSONAL_ID = 'spotify';
+const PERSONAL_KEY = 'earworm.spotify.pack';
+
+function readPersonalPack() {
+  try {
+    return JSON.parse(localStorage.getItem(PERSONAL_KEY));
+  } catch {
+    return null;
+  }
+}
+
+/** Index entry for the personal pack, or null if none has been built. */
+export function personalPackMeta() {
+  const data = readPersonalPack();
+  if (!data?.tracks?.length) return null;
+  const n = (d) => data.tracks.filter((t) => t.d === d).length;
+  return {
+    id: PERSONAL_ID,
+    name: 'Your Music',
+    code: 'YOU',
+    blurb: 'Your top and liked tracks, from Spotify',
+    color: '#1DB954',
+    total: data.tracks.length,
+    easy: n(1),
+    medium: n(2),
+    hard: n(3),
+    personal: true,
+    builtAt: data.builtAt || null,
+    source: data.source || null,
+  };
+}
+
+/** Store a freshly built personal pack (stored-shape rows) and drop the cache. */
+export function savePersonalPack(rows, source) {
+  cache.delete(PERSONAL_ID);
+  localStorage.setItem(
+    PERSONAL_KEY,
+    JSON.stringify({ id: PERSONAL_ID, builtAt: Date.now(), source, tracks: rows })
+  );
+}
+
+export function clearPersonalPack() {
+  cache.delete(PERSONAL_ID);
+  localStorage.removeItem(PERSONAL_KEY);
 }
 
 /** Every track across the given packs, fetched in parallel. */

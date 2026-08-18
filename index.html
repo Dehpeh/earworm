@@ -73,6 +73,23 @@
       </div>
     </div>
 
+    <div id="personal" class="personal" data-reveal>
+      <div class="personal-head">
+        <p class="label">Your Music</p>
+        <span id="personal-meta" class="summary"></span>
+      </div>
+      <p id="personal-blurb" class="personal-blurb"></p>
+      <div id="personal-progress" class="personal-progress" hidden>
+        <i id="personal-bar" class="personal-bar"></i>
+      </div>
+      <div class="personal-actions">
+        <button id="spotify-connect" class="btn" type="button">Connect Spotify</button>
+        <button id="spotify-refresh" class="btn btn--quiet" type="button" hidden>Refresh</button>
+        <button id="spotify-cancel" class="btn btn--quiet" type="button" hidden>Stop</button>
+        <button id="spotify-remove" class="linky" type="button" hidden>Remove</button>
+      </div>
+    </div>
+
     <p class="label" id="diff-label" data-reveal>Difficulty</p>
     <div id="difficulty" class="segmented" role="group" aria-labelledby="diff-label" data-reveal></div>
 
@@ -164,6 +181,7 @@
     <li>Drag across the waveform to <strong>scrub</strong> anywhere inside what you
         have unlocked, then hit play.</li>
     <li>Seven tries. The sooner you get it, the better the share grid looks.</li>
+    <li>Right artist, wrong song shows in <strong>yellow</strong> — you are close.</li>
     <li>For <strong>Anime</strong> and <strong>Game Music</strong>, naming the show
         or the game it is from counts too.</li>
   </ol>
@@ -174,6 +192,8 @@
         same ones, and you get one go at each.</li>
     <li><strong>Endless</strong> is yours: choose the genres and the difficulty,
         and keep playing.</li>
+    <li><strong>Your Music</strong> is a crate built from your Spotify top tracks
+        and liked songs — connect it from the Endless picker.</li>
   </ol>
 
   <h3>Keys</h3>

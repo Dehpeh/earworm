@@ -620,7 +620,7 @@ main {
   opacity: 0.18;
 }
 
-.daily-tile-grid .cell.bad {
+.daily-tile-grid .cell.wrong {
   opacity: 0.55;
 }
 
@@ -628,7 +628,11 @@ main {
   opacity: 0.35;
 }
 
-.daily-tile-grid .cell.ok {
+.daily-tile-grid .cell.close {
+  opacity: 0.75;
+}
+
+.daily-tile-grid .cell.correct {
   opacity: 1;
 }
 
@@ -805,6 +809,64 @@ main {
   font-size: var(--t-sm);
   font-variant-numeric: tabular-nums;
   color: var(--ink-2);
+}
+
+/* ------------------------------------------------------------- your music */
+
+/* The Spotify import lives with the crates because it *is* a crate. It is a
+   quiet block: one line of state, one line of copy, the buttons. The green
+   arrives on the chip and the daily tile once there is something to play. */
+.personal {
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.personal-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s4);
+  flex-wrap: wrap;
+}
+
+.personal-head .label {
+  margin: 0;
+}
+
+.personal-blurb {
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  max-width: 60ch;
+}
+
+.personal-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-top: var(--s1);
+}
+
+.personal-actions .linky {
+  margin-left: auto;
+}
+
+.personal-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.personal-bar {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #1db954;
+  transition: width 300ms var(--ease);
 }
 
 /* -------------------------------------------------------------- transport */
@@ -1107,6 +1169,18 @@ input[type='range']::-moz-range-thumb {
 
 .guess-row.wrong .mark {
   color: var(--bad);
+}
+
+/* Right artist, wrong song. Warm but not lit: the tint says "close" without
+   pretending to be the answer, which keeps the full fill for the real thing. */
+.guess-row.close {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--go) 22%, transparent);
+}
+
+.guess-row.close .mark {
+  color: var(--go);
+  font-weight: 700;
 }
 
 .guess-row.correct {

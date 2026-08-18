@@ -52,6 +52,12 @@ export class Sfx {
     this._note(130, { type: 'square', dur: 0.09, peak: 0.05 });
   }
 
+  /** Close (right artist, wrong song): two quick notes a third apart, warm not scolding. */
+  close() {
+    this._note(392, { type: 'triangle', dur: 0.09, peak: 0.1 });
+    this._note(493.88, { type: 'triangle', at: 0.08, dur: 0.12, peak: 0.1 });
+  }
+
   /** Skip: a soft downward blip. */
   skip() {
     this._note(560, { dur: 0.08, peak: 0.08, glide: 392 });

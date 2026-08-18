@@ -23,9 +23,17 @@ Do not reintroduce a live search call in the play path. That is what the first
 version did and it broke with `403 Apple is rate-limiting song lookups`. If you
 are tempted, read the rate-limit section below.
 
-The single tolerated exception is `remintPreview()` in `src/app.js`: if a clip
-fails to load, it re-mints that one song from its stored `trackId` via `/lookup`,
-which is not rate-limited. Failure path only.
+Two tolerated exceptions, neither in a round:
+
+- `remintPreview()` in `src/app.js`: if a clip fails to load, it re-mints that
+  one song from its stored `trackId` via `/lookup`, which is not rate-limited.
+  Failure path only.
+- The **"Your Music" import** in `src/spotify.js`: a one-off, user-initiated
+  build of a personal pack that matches Spotify tracks to Apple previews. It
+  tries the built packs first (no network), then calls throttled `/search`
+  once *per artist* at `GAP_MS` with a 60s back-off on 403, capped at 60
+  artists. It has a progress bar and a Stop button, and it never runs while a
+  round is being played. See "Your Music" below.
 
 **Deezer is a build-time dependency only.** `tools/rank-songs.mjs` calls it for
 popularity data and nothing else. No Deezer URL is ever stored or played —
@@ -41,7 +49,9 @@ game uses Apple audio and has no backend.
 | `fonts/` | Self-hosted Archivo + IBM Plex Mono, latin and latin-ext |
 | `src/artists.js` | **The human-edited source.** 6 genres, ~810 seed artists, colours, caps |
 | `src/packs/*.json` | **Generated. The only song data the game reads.** Commit it |
-| `src/catalog.js` | Loads the pack index and pack files, expands the stored shape |
+| `src/catalog.js` | Loads the pack index and pack files, expands the stored shape; the personal pack |
+| `src/spotify.js` | "Your Music": PKCE auth, library fetch, match to Apple. Import time only |
+| `src/config.js` | Per-deployment public values: the Spotify client id |
 | `src/itunes.js` | Normalizing, matching, and `/lookup`. Build time, plus the re-mint |
 | `src/audio.js` | Web Audio player: decode, slice, scrub, volume, peaks, onset |
 | `src/sfx.js` | Synthesized sound cues. No audio assets |
@@ -296,6 +306,46 @@ dealt so a game that crosses midnight saves under the day it was dealt for, and
 laptops sleep through timers) redraws a visible home screen for the new day.
 
 There is no stats screen. It was removed deliberately.
+
+**A guess by the right artist is "close"**, kind `close`, yellow-tinted row,
+mark `~`, its own cue, 🟨 in the share grid (correct moved to 🟩). It is still
+a miss — the tier advances — it just tells you you are warm. Detected with
+`artistMatches()` on the pick's credit against the answer's, so a feature
+credit ("Lil Baby & Drake") counts for either name. Work picks are never close;
+a work has no artist.
+
+## Your Music (Spotify)
+
+A personal crate built in the browser from a Spotify account. `src/spotify.js`
+owns it; `src/config.js` holds the public `SPOTIFY_CLIENT_ID` (per deployment,
+not a secret — PKCE has none). The pack is saved to `localStorage` under
+`earworm.spotify.pack` **in the same stored shape as the built packs**, so
+`catalog.js` expands it with the same `expand()`, `personalPackMeta()` gives it
+an index entry (`personal: true`, Spotify green, id `spotify`), and
+`mergePersonal()` in `app.js` pushes it into `state.index` — after which the
+picker chips, the daily tiles, counts, reveal colour and share text all pick it
+up with no special casing.
+
+What Spotify is *for*: top tracks (three windows) and liked songs (newest 200),
+deduped, top tracks first. What it is not for: audio — preview URLs are gone
+from the Web API for new apps, so every track is matched to Apple like
+everything else. Apple has no ISRC lookup (measured), so matching is the built
+packs first, then throttled `/search` once per artist, at `GAP_MS`, capped at
+`MAX_ARTIST_SEARCHES` (60), with a 60s back-off on 403. Cancelling keeps what
+was found. Difficulty inside the crate is Spotify `popularity`, cut 15/30/rest.
+
+Auth is Authorization Code + PKCE, no backend: verifier and state in
+`sessionStorage` for the redirect, tokens in `localStorage`. **Spotify refuses
+`http://localhost` as a redirect URI** — only https, or the loopback
+`http://127.0.0.1:5173/`. `redirectUnsupported()` detects the wrong host and
+says so instead of sending you to a dead end. While the Spotify app is in
+Development Mode, each connecting account must be listed under User Management
+(cap 25) or the API answers 403; that error is surfaced verbatim.
+
+Test the matcher without an account: `import('/src/spotify.js')` in the console
+and call `matchToApple(fakeTracks, await loadTracks(index))` — one Apple call
+per unknown artist. `savePersonalPack(rows)` then `location.reload()` shows the
+crate everywhere; Remove on the picker clears it and the tokens.
 
 ## Guessing the work, not the song
 
