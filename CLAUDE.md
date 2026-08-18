@@ -47,7 +47,7 @@ game uses Apple audio and has no backend.
 | `index.html` | Markup + dialogs |
 | `styles.css` | All styling, both themes, all tokens |
 | `fonts/` | Self-hosted Archivo + IBM Plex Mono, latin and latin-ext |
-| `src/artists.js` | **The human-edited source.** 6 genres, ~810 seed artists, colours, caps |
+| `src/artists.js` | **The human-edited source.** 7 genres, ~900 seed artists, colours, caps |
 | `src/packs/*.json` | **Generated. The only song data the game reads.** Commit it |
 | `src/catalog.js` | Loads the pack index and pack files, expands the stored shape; the personal pack |
 | `src/spotify.js` | "Your Music": PKCE auth, library fetch, match to Apple. Import time only |
@@ -179,10 +179,19 @@ you to guess:
    deep) and 30 for anime (the theme match is the real filter there). Measured
    from cache with `--repack` before committing — never guess a cap when a
    zero-network experiment answers it.
-13. **A genre can set `minYear`.** Pop is 2000+. Filtering on release year rather
+13. **A genre can set `minYear`.** Pop is 1997+. Filtering on release year rather
    than on the seed list means an artist who spans the boundary contributes only
-   the side of it the pack wants, instead of being dropped whole — Madonna gives
-   you *Hung Up*, not *Like a Prayer*.
+   the side of it the pack wants, instead of being dropped whole.
+14. **The catalog is tuned for someone born around 2004.** That is the player,
+   and the first version was not: pop was 40% 80s/90s legacy acts whose
+   *post-2000* filler was all the year floor let through (Michael Jackson's
+   "Chicago (2014)" sat in easy), rap's tier 3 was underground boom-bap, and
+   rock's tail was shoegaze obscurities. The retune dropped those, added the
+   SoundCloud/trap/rage generation to rap, modern rock to rock, and created the
+   **Indie** crate (keshi, Laufey, grentperez, Joji, beabadoobee, Clairo…),
+   which also took the indie-leaning acts out of Rock — one song belongs to one
+   pack, and the builder's `claimed` set enforces it in artists.js order. If a
+   crate feels out of touch again, the fix is the seed list, not the bands.
 
 ### Difficulty comes from Deezer, not from me
 

@@ -4,18 +4,23 @@ A Songless/Heardle-style game: you hear **0.1 seconds** of a song and try to
 name it. Every skip or wrong guess buys you a longer clip:
 `0.1s → 0.5s → 1s → 2s → 4s → 8s → 16s`. Seven tries.
 
-**Six genres — pop, rap, rock, anime, K-pop and game music — at 1,500+ songs
-each**, three difficulties. Anime tracks are labeled with their source, so the
-reveal reads "Kimetsu no Yaiba OP1", and game tracks with their game. You can
-search the guess box by show or game as well as by song or artist, and naming
-the show or the game counts as getting it. You can scrub around inside whatever
-you have unlocked instead of always hearing it from the top.
+**Seven crates — pop, rap, rock, indie, anime, K-pop and game music — at
+1,500+ songs each**, three difficulties, tuned for someone born around 2004.
+Anime tracks are labeled with their source, so the reveal reads "Kimetsu no
+Yaiba OP1", and game tracks with their game. You can search the guess box by
+show or game as well as by song or artist, and naming the show or the game
+counts as getting it. A wrong song by the right artist shows yellow. You can
+scrub around inside whatever you have unlocked instead of always hearing it
+from the top.
 
 Two modes that actually differ. **Daily** is one song per genre per day, the
 same for everyone, one attempt each. **Endless** is yours: pull out the crates
-you want, pick a difficulty, and keep going.
+you want, pick a difficulty, and keep going. **Your Music** adds an eighth crate
+built from your Spotify top tracks and liked songs, matched to previews in the
+browser — no backend, nothing leaves the page but the sign-in.
 
-Static HTML/CSS/JS. No framework, no build step, no API keys, no backend.
+Static HTML/CSS/JS. No framework, no build step, no backend. The only key is
+the public Spotify client id in `src/config.js`, and only if you want that crate.
 
 ## Run it
 

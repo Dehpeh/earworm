@@ -10,4 +10,4 @@
 // local work: `http://127.0.0.1:5173/`, not `localhost`) → copy the Client ID
 // here. While the app is in Development Mode, each Spotify account that
 // connects must also be added under User Management (limit 25).
-export const SPOTIFY_CLIENT_ID = '';
+export const SPOTIFY_CLIENT_ID = 'f4a1aa031d50415f96992cd2bc6d64dd';

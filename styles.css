@@ -854,6 +854,22 @@ main {
   margin-left: auto;
 }
 
+/* While importing, the number is the interface: big, condensed, tabular so
+   it does not jitter as digits change, in the crate's green. */
+.personal-pct {
+  font-size: var(--t-xl);
+  font-weight: 800;
+  font-stretch: 78%;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: #1db954;
+}
+
+.personal.is-busy {
+  border-color: color-mix(in srgb, #1db954 45%, var(--line));
+}
+
 .personal-progress {
   height: 4px;
   border-radius: 2px;
@@ -867,6 +883,22 @@ main {
   width: 0;
   background: #1db954;
   transition: width 300ms var(--ease);
+}
+
+/* A moving sheen so a stalled-looking bar (Apple's 4s pacing) still reads as alive. */
+.personal.is-busy .personal-progress {
+  background-image: linear-gradient(
+    90deg,
+    var(--line) 0%,
+    color-mix(in srgb, #1db954 25%, var(--line)) 50%,
+    var(--line) 100%
+  );
+  background-size: 200% 100%;
+  animation: sweep 1.6s linear infinite;
+}
+
+.motion-reduced .personal.is-busy .personal-progress {
+  animation: none;
 }
 
 /* -------------------------------------------------------------- transport */

@@ -396,6 +396,8 @@ function renderPersonal() {
   el.spotifyRemove.hidden = busy || !meta;
   el.spotifyCancel.hidden = !busy;
   el.personalProgress.hidden = !busy;
+  el.personalPct.hidden = !busy;
+  el.personal.classList.toggle('is-busy', Boolean(busy));
 
   if (!configured && !meta) {
     el.personalMeta.textContent = '';
@@ -405,10 +407,11 @@ function renderPersonal() {
   }
   if (busy) {
     const p = busy.progress || {};
-    el.personalMeta.textContent = p.matched != null ? `${p.matched} matched` : '';
-    el.personalBlurb.textContent = p.note || p.status || 'Working';
-    const frac = p.total ? p.done / p.total : 0;
-    el.personalBar.style.width = `${Math.round(frac * 100)}%`;
+    const pct = Math.round(p.pct || 0);
+    el.personalPct.textContent = `${pct}%`;
+    el.personalMeta.textContent = p.matched ? `${p.matched} matched` : '';
+    el.personalBlurb.textContent = p.label || 'Working';
+    el.personalBar.style.width = `${pct}%`;
     return;
   }
   if (meta) {
@@ -434,20 +437,37 @@ function renderPersonal() {
 async function importSpotify() {
   if (state.importing) return;
   const controller = new AbortController();
-  state.importing = { controller, progress: { status: 'Connecting to Spotify' } };
+  state.importing = { controller, progress: { pct: 0, label: 'Connecting to Spotify' } };
   renderPersonal();
   const report = (progress) => {
     if (!state.importing) return;
     state.importing.progress = { ...state.importing.progress, ...progress };
     renderPersonal();
   };
+  // One number for the whole thing: reading the library is the first 15%,
+  // matching is the rest. The library read is a handful of quick calls; the
+  // match is the slow part, so it gets the room.
+  const LIB_SHARE = 15;
   try {
-    const wanted = await spotify.fetchLibrary((status) => report({ status, note: status }));
+    let libSteps = 0;
+    const wanted = await spotify.fetchLibrary(() => {
+      libSteps++;
+      report({ pct: Math.min(LIB_SHARE, (libSteps / spotify.LIBRARY_STEPS) * LIB_SHARE), label: 'Reading your library' });
+    });
     if (!wanted.length) throw new Error('Spotify returned no tracks for this account.');
-    report({ note: `Matching ${wanted.length} songs`, done: 0, total: wanted.length });
+    report({ pct: LIB_SHARE, label: `Matching ${wanted.length} songs to previews` });
     const local = await loadTracks(state.index.filter((p) => !p.personal));
     const result = await spotify.matchToApple(wanted, local, {
-      onProgress: (p) => report({ ...p, note: p.note || (p.phase === 'local' ? 'Checked the built crates' : '') }),
+      onProgress: (p) => {
+        const frac = p.phase === 'local' ? 0 : p.total ? p.done / p.total : 0;
+        report({
+          pct: LIB_SHARE + frac * (100 - LIB_SHARE),
+          matched: p.matched,
+          label: p.note?.startsWith('Apple is rate-limiting')
+            ? p.note
+            : `Matching ${wanted.length} songs to previews`,
+        });
+      },
       signal: controller.signal,
     });
     if (!result.rows.length) throw new Error('None of your songs could be matched to a preview.');
@@ -1188,6 +1208,8 @@ function bind() {
     pickEndless: $('#pick-endless'),
     endlessCount: $('#endless-count'),
     packChips: $('#pack-chips'),
+    personal: $('#personal'),
+    personalPct: $('#personal-pct'),
     personalMeta: $('#personal-meta'),
     personalBlurb: $('#personal-blurb'),
     personalProgress: $('#personal-progress'),

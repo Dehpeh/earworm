@@ -4,23 +4,23 @@
    "id": "pop",
    "name": "Pop",
    "code": "POP",
-   "blurb": "Chart pop, 2000 to now",
+   "blurb": "Chart pop, late 90s to now",
    "color": "#F0C231",
-   "total": 2123,
-   "easy": 319,
-   "medium": 637,
-   "hard": 1167
+   "total": 2000,
+   "easy": 300,
+   "medium": 600,
+   "hard": 1100
   },
   {
    "id": "rap",
    "name": "Rap",
    "code": "RAP",
-   "blurb": "Hip-hop from the block parties on",
+   "blurb": "Hip-hop, from the SoundCloud era back to the icons",
    "color": "#2E5BE8",
-   "total": 2016,
-   "easy": 303,
-   "medium": 605,
-   "hard": 1108
+   "total": 2040,
+   "easy": 306,
+   "medium": 612,
+   "hard": 1122
   },
   {
    "id": "rock",
@@ -28,10 +28,21 @@
    "code": "RCK",
    "blurb": "Riffs, arenas and college radio",
    "color": "#E4483F",
-   "total": 2253,
-   "easy": 338,
-   "medium": 676,
-   "hard": 1239
+   "total": 2068,
+   "easy": 311,
+   "medium": 620,
+   "hard": 1137
+  },
+  {
+   "id": "indie",
+   "name": "Indie",
+   "code": "IND",
+   "blurb": "Bedroom pop, indie rock and the alt-R&B in between",
+   "color": "#8FD3F4",
+   "total": 1875,
+   "easy": 282,
+   "medium": 562,
+   "hard": 1031
   },
   {
    "id": "anime",

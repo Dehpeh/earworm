@@ -51,6 +51,8 @@ const COOLDOWN_MS = 60_000;
 const MAX_ARTIST_SEARCHES = 60;
 /** How many liked songs to pull, newest first. Top tracks come on top of this. */
 const MAX_SAVED = 200;
+/** Calls fetchLibrary makes at most (3 top windows + saved pages), for progress. */
+export const LIBRARY_STEPS = 3 + MAX_SAVED / 50;
 
 /* --------------------------------------------------------------------- auth */
 
