@@ -1,0 +1,70 @@
+{
+ "packs": [
+  {
+   "id": "pop",
+   "name": "Pop",
+   "code": "POP",
+   "blurb": "Chart pop, 2000 to now",
+   "color": "#F0C231",
+   "total": 2123,
+   "easy": 708,
+   "medium": 708,
+   "hard": 707
+  },
+  {
+   "id": "rap",
+   "name": "Rap",
+   "code": "RAP",
+   "blurb": "Hip-hop from the block parties on",
+   "color": "#2E5BE8",
+   "total": 2016,
+   "easy": 672,
+   "medium": 672,
+   "hard": 672
+  },
+  {
+   "id": "rock",
+   "name": "Rock",
+   "code": "RCK",
+   "blurb": "Riffs, arenas and college radio",
+   "color": "#E4483F",
+   "total": 2253,
+   "easy": 751,
+   "medium": 751,
+   "hard": 751
+  },
+  {
+   "id": "anime",
+   "name": "Anime",
+   "code": "ANI",
+   "blurb": "Openings, endings and inserts",
+   "color": "#E8672A",
+   "total": 1513,
+   "easy": 505,
+   "medium": 505,
+   "hard": 503
+  },
+  {
+   "id": "kpop",
+   "name": "K-Pop",
+   "code": "KOR",
+   "blurb": "Idols, soloists and the Hallyu wave",
+   "color": "#BC5FE3",
+   "total": 1780,
+   "easy": 594,
+   "medium": 594,
+   "hard": 592
+  },
+  {
+   "id": "vgm",
+   "name": "Game Music",
+   "code": "VGM",
+   "blurb": "Chiptune, boss themes and open worlds",
+   "color": "#4ACF8B",
+   "total": 2357,
+   "easy": 786,
+   "medium": 786,
+   "hard": 785
+  }
+ ]
+}

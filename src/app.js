@@ -1,10 +1,12 @@
-import { PACKS, PACK_BY_ID, ALL_TRACKS } from './catalog.js';
-import { norm, trackKey, lookupIds, toRecord } from './itunes.js';
+import { loadIndex, loadTracks, DIFFICULTIES } from './catalog.js';
+import { norm, lookupIds } from './itunes.js';
 import { SnippetPlayer } from './audio.js';
+import { Sfx } from './sfx.js';
 
-/** How much of the intro you get to hear at each stage. */
+/** How much of the clip you get to hear at each stage. */
 const TIERS = [0.1, 0.5, 1, 2, 4, 8, 16];
-const MAX_T = TIERS[TIERS.length - 1];
+/** Below this the window is too short for scrubbing to mean anything. */
+const SCRUB_MIN = 1;
 const LS = 'earworm.';
 
 /* ------------------------------------------------------------------ storage */
@@ -26,54 +28,6 @@ const store = {
     }
   },
 };
-
-/**
- * The song manifest: src/resolved.json, built once by tools/build-index.mjs and
- * committed. This is the only source of song metadata at runtime — the game
- * never calls a music API, so it can't be rate-limited and works on any static
- * host. Songless does the same thing with a server minting Deezer URLs per
- * request; Apple's preview URLs are unsigned and stable, so a plain static file
- * is enough here.
- */
-const manifest = new Map();
-
-async function loadManifest() {
-  const res = await fetch('./src/resolved.json', { cache: 'no-cache' });
-  if (!res.ok) throw new Error(`manifest ${res.status}`);
-  for (const [k, v] of Object.entries(await res.json())) {
-    if (v?.previewUrl) manifest.set(k, v);
-  }
-}
-
-/** Catalog entries that actually have a playable preview in the manifest. */
-function playable(tracks) {
-  return tracks.filter((t) => manifest.has(trackKey(t)));
-}
-
-/**
- * Self-heal a stale preview URL.
- *
- * Apple's preview URLs are unsigned and long-lived, but they do rotate
- * eventually — the failure mode Songless dodges by minting a fresh Deezer URL
- * server-side on every request. We can't do that from a static host, so
- * instead: when a clip fails to load, re-mint it from the stored trackId via
- * /lookup. That endpoint takes batched ids and is not rate-limited (unlike
- * /search), so this costs one cheap call and only ever runs on failure.
- */
-async function remintPreview(track) {
-  const key = trackKey(track);
-  const known = manifest.get(key);
-  if (!known?.trackId) return null;
-  try {
-    const [fresh] = await lookupIds([known.trackId]);
-    if (!fresh?.previewUrl) return null;
-    const rec = toRecord(fresh);
-    manifest.set(key, rec);
-    return rec;
-  } catch {
-    return null;
-  }
-}
 
 /* --------------------------------------------------------------- seeded rng */
 
@@ -103,78 +57,225 @@ function todayKey() {
   ).padStart(2, '0')}`;
 }
 
+/* ------------------------------------------------------------------ colour */
+
+function relLum(hex) {
+  const c = [1, 3, 5].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+
+/**
+ * Text colour for a filled crate, chosen by whichever of the two candidates
+ * actually contrasts better. Twenty-three hand-picked hues span too wide a
+ * lightness range for a fixed rule: dark ink is right on the yellows and
+ * greens, wrong on the blues and the vermillion.
+ */
+function inkOn(hex) {
+  const L = relLum(hex);
+  const onDark = (L + 0.05) / (relLum('#17170e') + 0.05);
+  const onLight = (relLum('#f7f7f5') + 0.05) / (L + 0.05);
+  return onDark >= onLight ? '#17170e' : '#f7f7f5';
+}
+
 /* -------------------------------------------------------------------- state */
 
 const player = new SnippetPlayer();
+const sfx = new Sfx(player);
 
 const state = {
-  mode: store.get('mode', 'daily'),
-  // Deliberately not the pop/rock/hip-hop trio — breadth is the whole point.
-  packs: new Set(store.get('packs', ['pop', 'rock', 'hiphop', 'kpop', 'edm', 'vgm', 'latin'])),
-  pool: [],
+  screen: 'home',
+  mode: 'endless',
+  packs: new Set(store.get('packs', ['pop', 'rap', 'rock'])),
+  difficulty: store.get('difficulty', 2),
+  index: [],
+  pool: [], // candidate answers
+  searchPool: [], // autocomplete space
   round: null,
-  pending: null, // the autocomplete row the player has selected
-  hi: -1, // highlighted autocomplete index
+  pending: null,
+  hi: -1,
   matches: [],
+  scrubbing: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
 const el = {};
 
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const packMeta = (id) => state.index.find((p) => p.id === id);
+const playablePacks = () => state.index.filter((p) => p.total > 0);
+
+/* ------------------------------------------------------------------ motion */
+
+const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * Replay the entrance for whatever is on screen.
+ *
+ * The screens are toggled with `hidden`, so an IntersectionObserver would only
+ * ever fire once for elements that were never really "scrolled into" anything.
+ * Resetting and re-arming per screen change is both simpler and what the
+ * navigation actually means.
+ */
+function playReveal(root) {
+  const items = [...root.querySelectorAll('[data-reveal]')];
+  if (reduced()) {
+    items.forEach((el) => el.classList.add('is-in'));
+    return;
+  }
+  items.forEach((el) => el.classList.remove('is-in'));
+  // Two frames: one for the removal to land, one for the transition to have a
+  // start value to animate from.
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      items.forEach((el, i) => {
+        if (!el.style.getPropertyValue('--d')) el.style.setProperty('--d', `${i * 55}ms`);
+        el.classList.add('is-in');
+      });
+    })
+  );
+}
+
+/* ------------------------------------------------------------------ screens */
+
+function show(screen) {
+  state.screen = screen;
+  el.home.hidden = screen !== 'home';
+  el.crate.hidden = screen !== 'crate';
+  el.game.hidden = screen !== 'game';
+  if (screen !== 'game') player.stop();
+
+  el.breadcrumb.textContent =
+    screen === 'crate'
+      ? 'Endless'
+      : screen === 'game'
+      ? state.mode === 'daily'
+        ? `Daily · ${todayKey()}`
+        : 'Endless'
+      : '';
+  window.scrollTo({ top: 0, behavior: 'instant' });
+  playReveal(screen === 'home' ? el.home : screen === 'crate' ? el.crate : el.game);
+}
+
+/* --------------------------------------------------------------------- home */
+
+/**
+ * Daily is one genre and one song per day, the same for everyone, drawn from
+ * the whole library rather than from whatever you last selected. Seeding the
+ * *genre* off the date as well means only one pack file has to load, and the
+ * genre is public knowledge — which is the fair version of the puzzle, since
+ * everyone gets that same hint.
+ */
+function dailyPack() {
+  const avail = playablePacks();
+  if (!avail.length) return null;
+  const rand = mulberry32(hash32('crate|' + todayKey()));
+  return avail[Math.floor(rand() * avail.length)];
+}
+
+function renderHome() {
+  const dp = dailyPack();
+  el.dailyCrate.textContent = dp ? dp.name : '—';
+  if (dp) {
+    el.pickDaily.style.setProperty('--c', dp.color);
+    el.pickDaily.style.setProperty('--on-c', inkOn(dp.color));
+  }
+  el.pickDaily.disabled = !dp;
+
+  const total = playablePacks().reduce((n, p) => n + p.total, 0);
+  el.endlessCount.textContent = total ? `${total.toLocaleString()} songs` : '—';
+  el.pickEndless.disabled = !total;
+
+  const done = store.get('daily.' + todayKey(), null);
+  el.pickDaily.querySelector('.mode-blurb').textContent = done
+    ? 'Already played today. Open it to see how you did.'
+    : 'One track, one genre, the same for everyone. One go at it.';
+}
+
 /* --------------------------------------------------------------- pack picker */
 
-function renderPacks() {
-  el.packGrid.innerHTML = '';
-  for (const p of PACKS) {
-    // Count what's actually in the manifest, so a partly-built index never
-    // offers a pack that can't produce a song.
-    const n = playable(ALL_TRACKS.filter((t) => t.packId === p.id)).length;
-    if (!n) state.packs.delete(p.id);
+function renderCrate() {
+  el.packChips.innerHTML = '';
+  state.index.forEach((p, i) => {
     const on = state.packs.has(p.id);
     const b = document.createElement('button');
-    b.className = 'pack' + (on ? ' on' : '');
+    b.className = 'chip';
     b.type = 'button';
-    b.disabled = n === 0;
+    b.disabled = p.total === 0;
+    b.style.setProperty('--c', p.color || '#888');
+    b.style.setProperty('--on-c', inkOn(p.color || '#888888'));
+    b.style.setProperty('--i', String(i));
     b.setAttribute('aria-pressed', String(on));
-    b.innerHTML = `
-      <span class="pack-emoji">${p.emoji}</span>
-      <span class="pack-body">
-        <span class="pack-name">${p.name}</span>
-        <span class="pack-blurb">${p.blurb}</span>
-      </span>
-      <span class="pack-count">${n || '—'}</span>`;
+    b.setAttribute('aria-label', `${p.name}, ${p.total} songs`);
+    b.innerHTML =
+      `<span class="chip-name">${escapeHtml(p.name)}</span>` +
+      `<span class="chip-count">${p.total.toLocaleString()}</span>`;
     b.addEventListener('click', () => {
       if (state.packs.has(p.id)) state.packs.delete(p.id);
       else state.packs.add(p.id);
       if (state.packs.size === 0) state.packs.add(p.id); // never empty
       store.set('packs', [...state.packs]);
-      renderPacks();
+      b.setAttribute('aria-pressed', String(state.packs.has(p.id)));
+      renderDifficulty();
     });
-    el.packGrid.append(b);
+    el.packChips.append(b);
+  });
+  renderSummary();
+}
+
+/** Bulk select. `none` keeps one genre, because an empty selection cannot deal. */
+function setAllPacks(on) {
+  state.packs.clear();
+  const playable = playablePacks();
+  if (on) for (const p of playable) state.packs.add(p.id);
+  else if (playable[0]) state.packs.add(playable[0].id);
+  store.set('packs', [...state.packs]);
+  renderCrate();
+  renderDifficulty();
+}
+
+function countFor(diff) {
+  const key = DIFFICULTIES.find((d) => d.id === diff).key;
+  return [...state.packs].reduce((n, id) => n + (packMeta(id)?.[key] || 0), 0);
+}
+
+function renderDifficulty() {
+  el.difficulty.innerHTML = '';
+  for (const d of DIFFICULTIES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('aria-pressed', String(state.difficulty === d.id));
+    b.setAttribute('aria-label', `${d.name}, ${d.note}, ${countFor(d.id)} songs`);
+    b.title = d.note;
+    b.innerHTML = `
+      <span class="seg-name">${d.name}</span>
+      <span class="seg-note">${countFor(d.id).toLocaleString()} songs</span>`;
+    b.addEventListener('click', () => {
+      state.difficulty = d.id;
+      store.set('difficulty', d.id);
+      renderDifficulty();
+    });
+    el.difficulty.append(b);
   }
-  const n = poolForPacks().length;
-  el.packSummary.textContent = `${state.packs.size} pack${
-    state.packs.size === 1 ? '' : 's'
-  } · ${n} songs`;
+  renderSummary();
+}
+
+function renderSummary() {
+  const n = countFor(state.difficulty);
+  const packs = state.packs.size;
+  el.packSummary.textContent = `${packs} genre${packs === 1 ? '' : 's'} · ${n.toLocaleString()} songs in play`;
   el.startBtn.disabled = n === 0;
 }
 
 /* --------------------------------------------------------------- round setup */
 
-function poolForPacks() {
-  return playable(ALL_TRACKS.filter((t) => state.packs.has(t.packId)));
-}
-
-function packSignature() {
-  return [...state.packs].sort().join(',');
-}
-
-/** Order the pool so we can walk it if the first pick has no preview. */
-function candidateOrder(pool) {
-  if (state.mode === 'daily') {
-    const rand = mulberry32(hash32(todayKey() + '|' + packSignature()));
+/** Order the pool so we can walk it if the first pick will not load. */
+function candidateOrder(pool, seed) {
+  if (seed) {
+    const rand = mulberry32(hash32(seed));
     const start = Math.floor(rand() * pool.length);
-    // Deterministic: today's song first, then a fixed fallback walk.
     return Array.from({ length: pool.length }, (_, i) => pool[(start + i * 7 + i) % pool.length]);
   }
   const recent = new Set(store.get('recent', []));
@@ -187,56 +288,110 @@ function candidateOrder(pool) {
   return bag;
 }
 
-async function newRound() {
-  player.stop();
-  state.pool = poolForPacks();
+/**
+ * Self-heal a stale preview URL.
+ *
+ * Apple's preview URLs are unsigned and long-lived, but they do rotate. The
+ * shipped game cannot mint a fresh one server-side, so instead: when a clip
+ * fails to load, re-mint it from the stored trackId via /lookup. That endpoint
+ * takes batched ids and is not rate-limited (unlike /search), so this costs one
+ * cheap call and only ever runs on failure. It is the single tolerated
+ * exception to "the play path never calls a music API".
+ */
+async function remintPreview(track) {
+  try {
+    const [fresh] = await lookupIds([Number(track.id)]);
+    if (!fresh?.previewUrl) return null;
+    track.previewUrl = fresh.previewUrl;
+    if (fresh.artworkUrl100) track.artwork = fresh.artworkUrl100.replace('100x100bb', '400x400bb');
+    return track;
+  } catch {
+    return null;
+  }
+}
+
+async function startDaily() {
+  state.mode = 'daily';
+  show('game');
+  resetGameChrome('Loading today’s crate');
+
+  const pack = dailyPack();
+  if (!pack) {
+    el.status.textContent = 'No crates are built yet. Run node tools/build-packs.mjs.';
+    return;
+  }
+  try {
+    state.searchPool = await loadTracks([pack]);
+  } catch {
+    el.status.textContent = 'Could not load the song data.';
+    return;
+  }
+  // Every difficulty is in play: the daily is not tuned to your preferences.
+  state.pool = state.searchPool;
+
+  const saved = store.get('daily.' + todayKey(), null);
+  if (saved) {
+    const track = state.searchPool.find((t) => t.id === saved.id);
+    if (track) {
+      state.round = { track, tier: saved.tier, guesses: saved.guesses, done: false, won: false, cue: 0 };
+      renderGuesses();
+      const ok = await attachAudio(track);
+      finish(saved.won, { silent: true, playable: ok });
+      return;
+    }
+  }
+  await dealFrom(candidateOrder(state.pool, 'song|' + todayKey() + '|' + pack.id));
+}
+
+async function startEndless() {
+  state.mode = 'endless';
+  show('game');
+  resetGameChrome('Loading genres');
+
+  const packs = state.index.filter((p) => state.packs.has(p.id));
+  try {
+    state.searchPool = await loadTracks(packs);
+  } catch {
+    el.status.textContent = 'Could not load the song data. Run node tools/build-packs.mjs.';
+    return;
+  }
+  state.pool = state.searchPool.filter((t) => t.difficulty === state.difficulty);
+  if (!state.pool.length) {
+    el.status.textContent = 'No songs at this difficulty. Pick another genre or difficulty.';
+    return;
+  }
+  await dealFrom(candidateOrder(state.pool, null));
+}
+
+function resetGameChrome(message) {
+  if (el.revealDlg.open) el.revealDlg.close();
+  if (el.reveal.parentElement !== el.game) el.game.append(el.reveal);
   state.pending = null;
-  el.game.hidden = false;
-  el.setup.hidden = true;
   el.reveal.hidden = true;
+  el.guessWrap.hidden = false;
+  el.controls.hidden = false;
   el.guessInput.value = '';
   el.guessInput.disabled = true;
-  el.status.textContent = 'Finding a song…';
+  el.status.textContent = message;
   el.status.hidden = false;
   el.playBtn.disabled = true;
   el.skipBtn.disabled = true;
   el.submitBtn.disabled = true;
+}
 
-  // Daily: if today's puzzle is already finished, jump straight to the result.
-  if (state.mode === 'daily') {
-    const saved = store.get('daily.' + todayKey() + '.' + packSignature(), null);
-    if (saved) {
-      state.round = { ...saved, restored: true };
-      renderGuesses();
-      const ok = await attachAudio(saved.track);
-      finish(saved.won, { silent: true, resolvedOverride: ok });
-      return;
-    }
-  }
-
-  const order = candidateOrder(state.pool);
+async function dealFrom(order) {
   for (let i = 0; i < Math.min(order.length, 8); i++) {
     const track = order[i];
-    // Straight out of the manifest — no network call, so nothing to throttle.
-    const resolved = manifest.get(trackKey(track));
-    if (!resolved) continue;
-
-    state.round = {
-      track,
-      resolved,
-      tier: 0,
-      guesses: [],
-      done: false,
-      won: false,
-      packSig: packSignature(),
-    };
+    state.round = { track, tier: 0, guesses: [], done: false, won: false, cue: 0 };
+    let ok = true;
     try {
-      await player.load(resolved.previewUrl);
+      await player.load(track.previewUrl);
     } catch {
-      // Stale URL? Re-mint once from the trackId before giving up on this song.
+      ok = false;
+    }
+    if (!ok) {
       const fresh = await remintPreview(track);
       if (!fresh) continue;
-      state.round.resolved = fresh;
       try {
         await player.load(fresh.previewUrl);
       } catch {
@@ -246,58 +401,141 @@ async function newRound() {
     if (state.mode === 'endless') {
       const recent = store.get('recent', []);
       recent.push(track.id);
-      store.set('recent', recent.slice(-60));
+      store.set('recent', recent.slice(-200));
     }
     el.status.hidden = true;
     el.guessInput.disabled = false;
     el.playBtn.disabled = false;
     el.skipBtn.disabled = false;
     renderGuesses();
-    renderTimeline();
+    for (const row of el.guessList.children) row.classList.add('dealt');
+    renderLadder();
+    renderScope();
     el.guessInput.focus();
     return;
   }
-
-  el.status.textContent =
-    'Could not load a preview — check your connection, or pick different packs.';
+  el.status.textContent = 'Could not load a preview. Check your connection and try again.';
 }
 
-/** Reload the audio for a restored daily round so the reveal can play it. */
+/** Reload the audio for a restored daily round so the reveal can still play. */
 async function attachAudio(track) {
   try {
-    const resolved = manifest.get(trackKey(track));
-    if (!resolved) return null;
-    state.round.resolved = resolved;
-    await player.load(resolved.previewUrl);
-    return resolved;
+    await player.load(track.previewUrl);
+    return true;
   } catch {
-    return null;
+    const fresh = await remintPreview(track);
+    if (!fresh) return false;
+    try {
+      await player.load(fresh.previewUrl);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
-/* ----------------------------------------------------------------- timeline */
+/* ------------------------------------------------------------------- ladder */
 
-function renderTimeline() {
+/** How much audio is currently unlocked, in seconds. */
+function windowEnd() {
+  const r = state.round;
+  if (!r) return TIERS[0];
+  if (r.done) return player.duration || TIERS[TIERS.length - 1];
+  return TIERS[Math.min(r.tier, TIERS.length - 1)];
+}
+
+function renderLadder() {
   const r = state.round;
   if (!r) return;
-  const unlocked = TIERS[Math.min(r.tier, TIERS.length - 1)];
-  el.unlocked.style.width = `${(unlocked / MAX_T) * 100}%`;
-  el.ticks.innerHTML = TIERS.map(
-    (t) =>
-      `<span class="tick${t <= unlocked ? ' lit' : ''}" style="left:${(t / MAX_T) * 100}%"></span>`
-  ).join('');
-  el.snippetLabel.textContent = r.done ? 'Full preview' : `${unlocked}s`;
+  el.ladder.innerHTML = TIERS.map((t, i) => {
+    const cls = r.done || i < r.tier ? 'rung lit' : i === r.tier ? 'rung now' : 'rung';
+    return `<span class="${cls}">${t}s</span>`;
+  }).join('');
+  el.ladder.setAttribute(
+    'aria-label',
+    r.done ? 'Full preview unlocked' : `${windowEnd()} seconds of audio unlocked`
+  );
 }
 
-player.onProgress = (elapsed) => {
-  if (elapsed === null) {
-    el.playhead.style.opacity = '0';
+/* ----------------------------------------------------------------- waveform */
+
+function drawWave(pos) {
+  const c = el.wave;
+  const w = c.clientWidth;
+  const h = c.clientHeight;
+  if (!w || !h) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+    c.width = Math.round(w * dpr);
+    c.height = Math.round(h * dpr);
+  }
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const end = windowEnd();
+  const buckets = Math.max(24, Math.floor(w / 2));
+  const peaks = player.peaks(0, end, buckets);
+  if (!peaks) return;
+
+  const css = getComputedStyle(document.documentElement);
+  const base = css.getPropertyValue('--ink-3').trim();
+  const hot = css.getPropertyValue('--go').trim();
+  const cue = state.round?.cue || 0;
+
+  const bw = w / buckets;
+  const mid = h / 2;
+  for (let i = 0; i < buckets; i++) {
+    const t = ((i + 0.5) / buckets) * end;
+    // The action colour marks only the audio that has actually sounded this
+    // pass. Everything else stays neutral.
+    ctx.fillStyle = pos !== null && t >= cue && t <= pos ? hot : base;
+    const amp = Math.max(1, peaks[i] * h * 0.84);
+    ctx.fillRect(i * bw, mid - amp / 2, Math.max(1, bw - 1), amp);
+  }
+}
+
+function renderScope(pos = null) {
+  const r = state.round;
+  if (!r) return;
+  const end = windowEnd();
+  const scrubbable = end >= SCRUB_MIN;
+
+  el.waveWrap.classList.toggle('is-locked', !scrubbable);
+  el.waveWrap.setAttribute('aria-valuemin', '0');
+  el.waveWrap.setAttribute('aria-valuemax', end.toFixed(2));
+  el.waveWrap.setAttribute('aria-valuenow', (r.cue || 0).toFixed(2));
+  el.waveWrap.setAttribute('aria-valuetext', `${(r.cue || 0).toFixed(2)} seconds`);
+  el.waveWrap.tabIndex = scrubbable ? 0 : -1;
+
+  el.cue.style.left = `${((r.cue || 0) / end) * 100}%`;
+  el.cue.hidden = !scrubbable;
+
+  if (pos === null) {
+    el.playhead.classList.remove('on');
+  } else {
+    el.playhead.classList.add('on');
+    el.playhead.style.left = `${Math.min(1, pos / end) * 100}%`;
+  }
+
+  el.clock.textContent = `${(pos ?? r.cue ?? 0).toFixed(2)} / ${end.toFixed(2)}`;
+  el.scrubHint.textContent = scrubbable
+    ? r.done
+      ? 'Full preview'
+      : 'Drag to scrub'
+    : `Scrub unlocks at ${SCRUB_MIN}s`;
+
+  drawWave(pos);
+}
+
+player.onProgress = (pos) => {
+  if (pos === null) {
     el.playBtn.classList.remove('playing');
+    renderScope(null);
     return;
   }
-  el.playhead.style.opacity = '1';
-  el.playhead.style.left = `${Math.min(1, elapsed / MAX_T) * 100}%`;
   el.playBtn.classList.add('playing');
+  renderScope(pos);
 };
 
 function playCurrent() {
@@ -307,10 +545,81 @@ function playCurrent() {
     player.stop();
     return;
   }
-  player.play(r.done ? player.duration : TIERS[Math.min(r.tier, TIERS.length - 1)]);
+  const end = windowEnd();
+  const from = Math.min(r.cue || 0, Math.max(0, end - 0.05));
+  player.play(from, end);
 }
 
-/* ------------------------------------------------------------------- guesses */
+/* ---------------------------------------------------------------- scrubbing */
+
+function cueFromClientX(clientX) {
+  const rect = el.waveWrap.getBoundingClientRect();
+  const x = Math.min(rect.width, Math.max(0, clientX - rect.left));
+  const end = windowEnd();
+  // Leave a sliver at the far right so a scrub to the end still plays.
+  return Math.min((x / rect.width) * end, Math.max(0, end - 0.05));
+}
+
+function setCue(seconds) {
+  const r = state.round;
+  if (!r) return;
+  r.cue = Math.max(0, seconds);
+  renderScope();
+}
+
+function bindScrub() {
+  el.waveWrap.addEventListener('pointerdown', (e) => {
+    if (!state.round || windowEnd() < SCRUB_MIN) return;
+    e.preventDefault();
+    try {
+      el.waveWrap.setPointerCapture(e.pointerId);
+    } catch {
+      // Capture is an optimisation for drags that leave the element; scrubbing
+      // still works without it, so a refusal must not abort the gesture.
+    }
+    state.scrubbing = true;
+    player.stop();
+    setCue(cueFromClientX(e.clientX));
+  });
+
+  el.waveWrap.addEventListener('pointermove', (e) => {
+    if (state.scrubbing) setCue(cueFromClientX(e.clientX));
+  });
+
+  el.waveWrap.addEventListener('pointerup', (e) => {
+    if (!state.scrubbing) return;
+    state.scrubbing = false;
+    try {
+      el.waveWrap.releasePointerCapture(e.pointerId);
+    } catch {
+      /* pointer already gone */
+    }
+    // Dropping the cursor is the play gesture: scrub, let go, hear it.
+    playCurrent();
+  });
+
+  el.waveWrap.addEventListener('pointercancel', () => (state.scrubbing = false));
+
+  // Arrow steps are proportional to the window, so the control works the same
+  // at 1s and at 30s.
+  el.waveWrap.addEventListener('keydown', (e) => {
+    const r = state.round;
+    if (!r || windowEnd() < SCRUB_MIN) return;
+    const end = windowEnd();
+    const step = e.shiftKey ? end / 10 : end / 50;
+    if (e.key === 'ArrowLeft') setCue(Math.max(0, r.cue - step));
+    else if (e.key === 'ArrowRight') setCue(Math.min(end - 0.05, r.cue + step));
+    else if (e.key === 'Home') setCue(0);
+    else if (e.key === 'End') setCue(end - 0.05);
+    else if (e.key === 'Enter') playCurrent();
+    else return;
+    e.preventDefault();
+  });
+
+  new ResizeObserver(() => renderScope()).observe(el.waveWrap);
+}
+
+/* ------------------------------------------------------------------ guesses */
 
 function renderGuesses() {
   const r = state.round;
@@ -318,33 +627,35 @@ function renderGuesses() {
   for (let i = 0; i < TIERS.length; i++) {
     const g = r.guesses[i];
     const row = document.createElement('li');
-    row.className = 'guess-row' + (g ? ` ${g.kind}` : '') + (!g && i === r.tier && !r.done ? ' active' : '');
-    const mark = g ? (g.kind === 'correct' ? '✓' : g.kind === 'skip' ? '›' : '✕') : '';
+    row.className =
+      'guess-row' + (g ? ` ${g.kind}` : '') + (!g && i === r.tier && !r.done ? ' active' : '');
+    const mark = g ? (g.kind === 'correct' ? '+' : g.kind === 'skip' ? '>' : '×') : '';
     const text = g
       ? g.kind === 'skip'
         ? 'Skipped'
         : g.label
       : i === r.tier && !r.done
-      ? `Listening to ${TIERS[i]}s`
+      ? `Listening at ${TIERS[i]}s`
       : '';
-    row.innerHTML = `<span class="mark">${mark}</span><span class="text">${escapeHtml(
-      text
-    )}</span><span class="at">${TIERS[i]}s</span>`;
+    row.innerHTML =
+      `<span class="idx">${String(i + 1).padStart(2, '0')}</span>` +
+      `<span class="mark">${mark}</span>` +
+      `<span class="text">${escapeHtml(text)}</span>` +
+      `<span class="at">${TIERS[i]}s</span>`;
+    row.style.setProperty('--i', String(i));
     el.guessList.append(row);
   }
   const left = TIERS.length - r.guesses.length;
-  el.skipBtn.textContent = r.tier + 1 < TIERS.length ? `Skip (+${TIERS[r.tier + 1] - TIERS[r.tier]}s)` : 'Give up';
-  el.remaining.textContent = r.done ? '' : `${left} guess${left === 1 ? '' : 'es'} left`;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  el.skipBtn.textContent =
+    r.tier + 1 < TIERS.length ? `Skip +${TIERS[r.tier + 1] - TIERS[r.tier]}s` : 'Give up';
+  el.remaining.textContent = r.done ? '' : `${left} left`;
 }
 
 function advance(entry) {
   const r = state.round;
   r.guesses.push(entry);
   r.tier = r.guesses.length;
+  r.cue = 0; // a wider window is a new axis; start it from the top
   state.pending = null;
   el.guessInput.value = '';
   el.submitBtn.disabled = true;
@@ -353,9 +664,13 @@ function advance(entry) {
     finish(false);
     return;
   }
+  if (entry.kind === 'skip') sfx.skip();
+  else sfx.wrong();
   renderGuesses();
-  renderTimeline();
-  player.play(TIERS[r.tier]);
+  renderLadder();
+  el.guessList.children[r.tier - 1]?.classList.add('just');
+  renderScope();
+  player.play(0, TIERS[r.tier]);
 }
 
 function submitGuess() {
@@ -363,10 +678,9 @@ function submitGuess() {
   if (!r || r.done) return;
   let pick = state.pending;
   if (!pick) {
-    // Allow a typed exact title match without touching the dropdown.
     const typed = norm(el.guessInput.value);
     if (!typed) return;
-    pick = state.pool.find((t) => norm(t.title) === typed || norm(t.label) === typed);
+    pick = state.searchPool.find((t) => t.nt === typed || norm(t.label) === typed);
     if (!pick) {
       flash(el.guessInput);
       return;
@@ -394,51 +708,64 @@ function flash(node) {
 
 /* ------------------------------------------------------------------- reveal */
 
-function finish(won, { silent = false, resolvedOverride } = {}) {
+function finish(won, { silent = false, playable = true } = {}) {
   const r = state.round;
+  const t = r.track;
+  const pack = packMeta(t.packId);
   r.done = true;
   r.won = won;
-  const meta = resolvedOverride || r.resolved;
+  r.cue = 0;
 
   player.stop();
   el.status.hidden = true;
   el.guessInput.disabled = true;
-  el.submitBtn.disabled = true;
-  el.skipBtn.disabled = true;
-  el.playBtn.disabled = !meta;
+  el.playBtn.disabled = !playable;
   closeSuggestions();
   renderGuesses();
-  renderTimeline();
+  renderLadder();
+  renderScope();
 
+  el.guessWrap.hidden = true;
+  el.controls.hidden = true;
   el.reveal.hidden = false;
-  el.revealTitle.textContent = r.track.title;
-  el.revealArtist.textContent = r.track.artist;
-  el.revealPack.textContent = PACK_BY_ID[r.track.packId].name;
+
+  // The result takes the stage: the reveal node itself moves into the modal,
+  // and moves back to the page on close, so there is one copy of the truth.
+  if (el.reveal.parentElement !== el.revealDlg) el.revealDlg.append(el.reveal);
+  el.viewBoard.hidden = false;
+  if (!el.revealDlg.open) el.revealDlg.showModal();
+  if (!silent) (won ? sfx.win() : sfx.lose());
+
+  // The answer arrives wearing its genre's colour.
+  const c = pack?.color || '#f0c231';
+  el.revealCard.style.setProperty('--c', c);
+  el.revealCard.style.setProperty('--on-c', inkOn(c));
+
   el.revealVerdict.textContent = won
-    ? `Got it in ${r.guesses.length} — ${TIERS[r.guesses.length - 1]}s`
+    ? `Got it at ${TIERS[r.guesses.length - 1]}s`
     : 'Out of guesses';
-  el.revealVerdict.className = 'verdict ' + (won ? 'win' : 'loss');
-  if (meta) {
-    el.revealArt.src = meta.artwork || '';
-    el.revealArt.hidden = !meta.artwork;
-    el.revealAlbum.textContent = [meta.album, meta.year].filter(Boolean).join(' · ');
-    el.revealLink.href = meta.storeUrl || '#';
-    el.revealLink.hidden = !meta.storeUrl;
+  el.revealTitle.textContent = t.title;
+  el.revealArtist.textContent = t.artist;
+  el.revealAlbum.textContent = [t.media, t.album, t.year, pack?.name].filter(Boolean).join(' · ');
+  el.revealArt.src = t.artwork || '';
+  el.revealArt.hidden = !t.artwork;
+  el.revealLink.href = t.storeUrl;
+
+  if (!silent && state.mode === 'daily') {
+    store.set('daily.' + todayKey(), {
+      id: t.id,
+      guesses: r.guesses,
+      tier: r.tier,
+      won,
+    });
   }
 
-  if (!silent) {
-    recordStats(won, r.guesses.length);
-    if (state.mode === 'daily') {
-      store.set('daily.' + todayKey() + '.' + packSignature(), {
-        track: r.track,
-        guesses: r.guesses,
-        tier: r.tier,
-        won,
-      });
-    }
-  }
   el.nextBtn.hidden = state.mode === 'daily';
   el.dailyNote.hidden = state.mode !== 'daily';
+  if (state.mode === 'daily') {
+    el.dailyNote.textContent =
+      'That is today’s. A new crate opens tomorrow, or head to Endless to keep going.';
+  }
 }
 
 function shareText() {
@@ -446,61 +773,26 @@ function shareText() {
   const squares = TIERS.map((_, i) => {
     const g = r.guesses[i];
     if (!g) return '⬜';
-    return g.kind === 'correct' ? '🟩' : g.kind === 'skip' ? '🟨' : '🟥';
+    return g.kind === 'correct' ? '\u{1f7e8}' : g.kind === 'skip' ? '⬛' : '\u{1f7e5}';
   }).join('');
-  const packNames = [...state.packs].map((id) => PACK_BY_ID[id].emoji).join('');
+  const pack = packMeta(r.track.packId);
   const head =
-    state.mode === 'daily' ? `Earworm ${todayKey()}` : 'Earworm (endless)';
-  return `${head} ${packNames}\n${squares}\n${
-    r.won ? `${TIERS[r.guesses.length - 1]}s` : 'X'
-  }/${MAX_T}s`;
+    state.mode === 'daily'
+      ? `Earworm ${todayKey()} · ${pack?.name || ''}`
+      : `Earworm · ${pack?.name || ''} · ${DIFFICULTIES.find((d) => d.id === state.difficulty).name}`;
+  return `${head}\n${squares}\n${r.won ? `${TIERS[r.guesses.length - 1]}s` : 'X'}`;
 }
 
-/* -------------------------------------------------------------------- stats */
-
-function recordStats(won, guessCount) {
-  const s = store.get('stats', { played: 0, wins: 0, streak: 0, best: 0, dist: [0, 0, 0, 0, 0, 0, 0] });
-  s.played++;
-  if (won) {
-    s.wins++;
-    s.streak++;
-    s.best = Math.max(s.best, s.streak);
-    s.dist[guessCount - 1]++;
-  } else {
-    s.streak = 0;
-  }
-  store.set('stats', s);
-}
-
-function renderStats() {
-  const s = store.get('stats', { played: 0, wins: 0, streak: 0, best: 0, dist: [0, 0, 0, 0, 0, 0, 0] });
-  el.statPlayed.textContent = s.played;
-  el.statWin.textContent = s.played ? Math.round((s.wins / s.played) * 100) + '%' : '—';
-  el.statStreak.textContent = s.streak;
-  el.statBest.textContent = s.best;
-  const max = Math.max(1, ...s.dist);
-  el.statDist.innerHTML = s.dist
-    .map(
-      (n, i) =>
-        `<div class="bar-row"><span>${TIERS[i]}s</span><div class="bar" style="width:${
-          (n / max) * 100
-        }%">${n || ''}</div></div>`
-    )
-    .join('');
-}
-
-/* ------------------------------------------------------------ autocomplete */
+/* ------------------------------------------------------------- autocomplete */
 
 function updateSuggestions() {
   const q = norm(el.guessInput.value);
   if (!q) return closeSuggestions();
   const starts = [];
   const contains = [];
-  for (const t of state.pool) {
-    const nt = norm(t.title);
-    const na = norm(t.artist);
-    if (nt.startsWith(q) || na.startsWith(q)) starts.push(t);
-    else if (nt.includes(q) || na.includes(q)) contains.push(t);
+  for (const t of state.searchPool) {
+    if (t.nt.startsWith(q) || t.na.startsWith(q) || t.nm.startsWith(q)) starts.push(t);
+    else if (t.nt.includes(q) || t.na.includes(q) || t.nm.includes(q)) contains.push(t);
     if (starts.length >= 8) break;
   }
   state.matches = [...starts, ...contains].slice(0, 8);
@@ -513,21 +805,23 @@ function renderSuggestions() {
   el.suggest.innerHTML = state.matches
     .map(
       (t, i) =>
-        `<li role="option" aria-selected="${i === state.hi}" class="${
+        `<li role="option" id="sug-${i}" aria-selected="${i === state.hi}" class="${
           i === state.hi ? 'hi' : ''
         }" data-i="${i}"><strong>${escapeHtml(t.title)}</strong><span>${escapeHtml(
-          t.artist
+          t.media || t.artist
         )}</span></li>`
     )
     .join('');
   el.suggest.hidden = false;
   el.guessInput.setAttribute('aria-expanded', 'true');
+  el.guessInput.setAttribute('aria-activedescendant', state.hi >= 0 ? `sug-${state.hi}` : '');
 }
 
 function closeSuggestions() {
   el.suggest.hidden = true;
   el.suggest.innerHTML = '';
   el.guessInput.setAttribute('aria-expanded', 'false');
+  el.guessInput.removeAttribute('aria-activedescendant');
   state.matches = [];
   state.hi = -1;
 }
@@ -542,83 +836,136 @@ function choose(i) {
   el.guessInput.focus();
 }
 
+/* -------------------------------------------------------------------- theme */
+
+function applyTheme(theme) {
+  if (theme) document.documentElement.setAttribute('data-theme', theme);
+  else document.documentElement.removeAttribute('data-theme');
+  const dark =
+    theme === 'dark' || (!theme && !window.matchMedia('(prefers-color-scheme: light)').matches);
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute('content', dark ? '#0e0e10' : '#e8e8e8');
+  // Canvas colours come from CSS custom properties, so it must be redrawn.
+  if (state.round) renderScope();
+}
+
+let themingTimer = 0;
+
+function toggleTheme() {
+  // Paint the swap over 350ms instead of snapping. The class is removed again so
+  // it never sits on top of ordinary interaction.
+  if (!reduced()) {
+    document.documentElement.classList.add('theming');
+    clearTimeout(themingTimer);
+    themingTimer = setTimeout(() => document.documentElement.classList.remove('theming'), 400);
+  }
+  const current =
+    document.documentElement.getAttribute('data-theme') ||
+    (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  const next = current === 'dark' ? 'light' : 'dark';
+  store.set('theme', next);
+  applyTheme(next);
+}
+
 /* --------------------------------------------------------------------- init */
 
 function bind() {
   Object.assign(el, {
-    setup: $('#setup'),
+    home: $('#home'),
+    crate: $('#crate'),
     game: $('#game'),
-    packGrid: $('#pack-grid'),
+    breadcrumb: $('#breadcrumb'),
+    goHome: $('#go-home'),
+    pickDaily: $('#pick-daily'),
+    pickEndless: $('#pick-endless'),
+    dailyCrate: $('#daily-crate'),
+    endlessCount: $('#endless-count'),
+    packChips: $('#pack-chips'),
+    difficulty: $('#difficulty'),
     packSummary: $('#pack-summary'),
     startBtn: $('#start'),
-    changeBtn: $('#change-packs'),
-    modeDaily: $('#mode-daily'),
-    modeEndless: $('#mode-endless'),
     playBtn: $('#play'),
     skipBtn: $('#skip'),
     submitBtn: $('#submit'),
     nextBtn: $('#next'),
     shareBtn: $('#share'),
     guessInput: $('#guess'),
+    guessWrap: $('.guess-wrap'),
+    controls: $('.controls'),
     suggest: $('#suggest'),
     guessList: $('#guesses'),
     remaining: $('#remaining'),
     status: $('#status'),
-    unlocked: $('#unlocked'),
+    ladder: $('#ladder'),
+    wave: $('#wave'),
+    waveWrap: $('#wave-wrap'),
+    cue: $('#cue'),
     playhead: $('#playhead'),
-    ticks: $('#ticks'),
-    snippetLabel: $('#snippet-label'),
+    clock: $('#clock'),
+    scrubHint: $('#scrub-hint'),
+    volume: $('#volume'),
+    volumeOut: $('#volume-out'),
     reveal: $('#reveal'),
+    revealDlg: $('#reveal-dialog'),
+    viewBoard: $('#view-board'),
+    revealCard: $('#reveal-card'),
     revealArt: $('#reveal-art'),
     revealTitle: $('#reveal-title'),
     revealArtist: $('#reveal-artist'),
     revealAlbum: $('#reveal-album'),
-    revealPack: $('#reveal-pack'),
     revealVerdict: $('#reveal-verdict'),
     revealLink: $('#reveal-link'),
     dailyNote: $('#daily-note'),
-    statsDlg: $('#stats-dialog'),
     helpDlg: $('#help-dialog'),
-    statPlayed: $('#stat-played'),
-    statWin: $('#stat-win'),
-    statStreak: $('#stat-streak'),
-    statBest: $('#stat-best'),
-    statDist: $('#stat-dist'),
   });
 
+  el.waveWrap.setAttribute('role', 'slider');
+  el.waveWrap.setAttribute('aria-label', 'Scrub position');
+
+  el.goHome.addEventListener('click', () => {
+    renderHome();
+    show('home');
+  });
+
+  el.pickDaily.addEventListener('click', () => {
+    player.unlock();
+    startDaily();
+  });
+  el.pickEndless.addEventListener('click', () => {
+    renderCrate();
+    renderDifficulty();
+    show('crate');
+  });
   el.startBtn.addEventListener('click', () => {
     player.unlock();
-    newRound();
+    startEndless();
   });
-  el.changeBtn.addEventListener('click', () => {
-    player.stop();
-    el.game.hidden = true;
-    el.setup.hidden = false;
-  });
-
-  const setMode = (m) => {
-    state.mode = m;
-    store.set('mode', m);
-    el.modeDaily.classList.toggle('on', m === 'daily');
-    el.modeEndless.classList.toggle('on', m === 'endless');
-    el.modeDaily.setAttribute('aria-pressed', String(m === 'daily'));
-    el.modeEndless.setAttribute('aria-pressed', String(m === 'endless'));
-  };
-  el.modeDaily.addEventListener('click', () => setMode('daily'));
-  el.modeEndless.addEventListener('click', () => setMode('endless'));
-  setMode(state.mode);
+  $('#select-all').addEventListener('click', () => setAllPacks(true));
+  $('#select-none').addEventListener('click', () => setAllPacks(false));
 
   el.playBtn.addEventListener('click', playCurrent);
   el.skipBtn.addEventListener('click', skip);
   el.submitBtn.addEventListener('click', submitGuess);
-  el.nextBtn.addEventListener('click', newRound);
+  el.nextBtn.addEventListener('click', () => startEndless());
+
+  const setVol = (pct, persist) => {
+    const v = Math.min(100, Math.max(0, pct));
+    el.volume.value = String(v);
+    el.volume.style.setProperty('--pct', v + '%');
+    el.volumeOut.textContent = v + '%';
+    player.setVolume(v / 100);
+    if (persist) store.set('volume', v);
+  };
+  el.volume.addEventListener('input', () => setVol(Number(el.volume.value), true));
+  setVol(store.get('volume', 80), false);
 
   el.shareBtn.addEventListener('click', async () => {
     const text = shareText();
     try {
       if (navigator.share) await navigator.share({ text });
       else await navigator.clipboard.writeText(text);
-      el.shareBtn.textContent = 'Copied!';
+      el.shareBtn.textContent = 'Copied';
     } catch {
       el.shareBtn.textContent = 'Copy failed';
     }
@@ -647,6 +994,7 @@ function bind() {
     }
   });
 
+  // mousedown, not click: it has to fire before the input blurs.
   el.suggest.addEventListener('mousedown', (e) => {
     const li = e.target.closest('li[data-i]');
     if (li) {
@@ -659,44 +1007,67 @@ function bind() {
     if (!e.target.closest('.guess-wrap')) closeSuggestions();
   });
 
+  const openHelp = () => {
+    if (!el.helpDlg.open) el.helpDlg.showModal();
+  };
+
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-    if (e.code === 'Space') {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // A modal owns the keyboard while it is open. Without this, Space hijacks
+    // the close button and a second `?` calls showModal() on an already-open
+    // dialog, which throws InvalidStateError.
+    if (document.querySelector('dialog[open]')) return;
+    if (e.code === 'Space' && state.screen === 'game') {
       e.preventDefault();
       playCurrent();
+    } else if (e.key.toLowerCase() === 't') {
+      toggleTheme();
+    } else if (e.key === '?') {
+      openHelp();
     }
   });
 
-  $('#open-stats').addEventListener('click', () => {
-    renderStats();
-    el.statsDlg.showModal();
-  });
-  $('#open-help').addEventListener('click', () => el.helpDlg.showModal());
+  $('#open-help').addEventListener('click', openHelp);
+  $('#toggle-theme').addEventListener('click', toggleTheme);
   for (const b of document.querySelectorAll('[data-close]')) {
-    b.addEventListener('click', () => b.closest('dialog').close());
+    b.addEventListener('click', () => b.closest('dialog')?.close());
   }
 
-  $('#tier-legend').textContent = TIERS.map((t) => `${t}s`).join(' → ');
+  el.revealDlg.addEventListener('close', () => {
+    if (el.reveal.parentElement === el.revealDlg) el.game.append(el.reveal);
+    el.viewBoard.hidden = true; // pointless once the board is already visible
+  });
+
+  bindScrub();
 }
 
-const packPlayable = (id) => playable(ALL_TRACKS.filter((t) => t.packId === id)).length;
-
 async function boot() {
+  // Scripting is on, so [data-reveal] may hide its content. Without this class
+  // nothing is ever hidden in the first place.
+  document.documentElement.classList.add('js');
+  const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const syncMotion = () => document.documentElement.classList.toggle('motion-reduced', mq.matches);
+  syncMotion();
+  mq.addEventListener('change', syncMotion);
+
   bind();
+  applyTheme(store.get('theme', null));
   try {
-    await loadManifest();
+    state.index = await loadIndex();
   } catch {
-    el.packGrid.innerHTML =
-      '<p class="status">Song manifest missing. Run <code>node tools/build-index.mjs</code>.</p>';
-    el.startBtn.disabled = true;
+    el.packChips.innerHTML =
+      '<p class="status">Song data missing. Run <code>node tools/build-packs.mjs</code>.</p>';
     return;
   }
-  // If none of the remembered packs can be served yet (partial index), fall
-  // back to whatever the manifest does cover.
-  if (![...state.packs].some(packPlayable)) {
-    state.packs = new Set(PACKS.map((p) => p.id).filter(packPlayable).slice(0, 7));
+  // Drop any remembered genre the current build no longer ships.
+  for (const id of [...state.packs]) if (!packMeta(id)) state.packs.delete(id);
+  if (!state.packs.size) {
+    const first = playablePacks()[0];
+    if (first) state.packs.add(first.id);
   }
-  renderPacks();
+  renderHome();
+  show('home');
 }
 
 boot();

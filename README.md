@@ -1,13 +1,19 @@
 # Earworm
 
 A Songless/Heardle-style game: you hear **0.1 seconds** of a song and try to
-name it. Every skip or wrong guess buys you a longer snippet —
+name it. Every skip or wrong guess buys you a longer clip:
 `0.1s → 0.5s → 1s → 2s → 4s → 8s → 16s`. Seven tries.
 
-The point of difference is breadth. Instead of pop/rock/hip-hop, there are
-**24 genre packs** you can mix and match — city pop, amapiano, anime openings,
-Bollywood, phonk, chanson, jazz standards, classical, video game scores,
-tropicália, and so on.
+**Six genres — pop, rap, rock, anime, K-pop and game music — at 1,500+ songs
+each**, three difficulties. Anime tracks are labeled with their source, so the
+reveal reads "Kimetsu no Yaiba OP1", and you can search the guess box by show
+name as well as by song or artist. You can scrub around inside whatever you have unlocked instead of always
+hearing it from the top.
+
+Two modes that actually differ. **Daily** seeds both the crate and the song off
+the date, so everyone gets the same one and you get a single attempt.
+**Endless** is yours: pull out the crates you want, pick a difficulty, and keep
+going.
 
 Static HTML/CSS/JS. No framework, no build step, no API keys, no backend.
 
@@ -17,8 +23,8 @@ Static HTML/CSS/JS. No framework, no build step, no API keys, no backend.
 node server.mjs
 ```
 
-Then <http://localhost:5173>. A server is required — ES modules don't load over
-`file://`.
+Then <http://localhost:5173>. A server is required, because ES modules do not
+load over `file://`.
 
 ## How the real games do it, and what this does
 
@@ -54,142 +60,211 @@ Spotify isn't an option for either: it
 for apps registered after Nov 2024. SoundCloud's API registration has been
 closed for years.
 
-### The manifest
+## The catalog seeds on artists, not songs
 
-`src/resolved.json` maps each catalog entry to its preview URL, artwork, album,
-store link, and Apple `trackId`. **The game reads only this file.** It never
-calls a search API, so it cannot be rate-limited, and it deploys to any static
-host — GitHub Pages, Netlify, Cloudflare Pages, a plain S3 bucket.
+The first version of this catalog was ~700 hand-written `[title, artist]` pairs,
+and every one of them had to be *proven* to exist. That meant a throttled
+`/search` per artist plus a matcher strict enough to stop `Holocene` resolving
+to the Vitamin String Quartet cover. It still left 24 songs unresolved.
 
-Commit `src/resolved.json`. It *is* the game data.
+That does not scale to 3,000 songs, so the pipeline is inverted. What's
+hand-written now is **artists** (`src/artists.js`, ~810 of them, each tagged
+with a rough fame tier). One `/search` with `attribute=artistTerm` returns that
+artist's own catalog, and tracks are harvested out of the response.
 
-### Building the manifest
+Every song is then real by construction: real title, real credit, real preview
+URL. There is no matcher, nothing unresolved, and no wrong matches to hunt. It
+also costs fewer requests than proving a smaller hand-written list.
 
 ```bash
-node tools/build-index.mjs             # discover whatever is missing
-node tools/build-index.mjs --refresh   # re-mint preview URLs (fast, free)
-node tools/build-index.mjs --targeted  # repair run: skip the artist sweep
-node tools/build-index.mjs --force     # rediscover everything
-node tools/build-index.mjs kpop jazz   # limit to these packs
+node tools/build-packs.mjs             # fetch what isn't cached, then pack
+node tools/build-packs.mjs pop rap     # limit to these genres
+node tools/build-packs.mjs --repack    # re-derive from cache, zero network
+node tools/build-packs.mjs --refresh   # re-mint preview URLs via /lookup
 ```
 
-Two stages, because Apple's two endpoints behave completely differently:
+### Rate limits, and why the cache exists
+
+Apple's two endpoints behave completely differently, and the asymmetry is the
+whole architecture:
 
 - **`/search` is throttled** to roughly 20 calls/minute per IP, and answers
-  `403` for *minutes* once you cross it. Discovery spends one call per **artist**
-  (`limit=200`) and matches every catalog track by that artist out of the single
-  response — 502 calls instead of 690. It's slow and patient, with escalating
-  backoff, and it saves after every hit so `^C` costs nothing.
-
+  `403` for *minutes* once you cross it. The builder paces itself at 15/min,
+  backs off from 60s to 15min when throttled, and writes each response as it
+  arrives so `^C` costs nothing.
 - **`/lookup` takes ~200 ids per call and is not throttled** (25 rapid calls,
-  all `200`). Because discovery records each song's `trackId`, `--refresh`
-  re-mints the entire catalog in **4 requests / 6 seconds** — measured on all
-  666 songs, zero losses.
+  all `200`). So `--refresh` re-mints every preview URL in the whole catalog in
+  a handful of requests.
 
-That asymmetry is the whole reason discovery only ever has to happen once.
+Every raw response is written to `tools/cache/` *before* anything is derived
+from it. Filter rules, per-artist caps and difficulty bands can then be retuned
+with `--repack`, which touches no network at all. Only new artists cost requests.
 
-### Matching
+A cold build is about 1,300 requests and roughly ninety minutes. The cache is what stops
+that being an hour you pay twice. `LIMIT=4` exercises the entire pipeline for
+four requests when you're changing the fetch path.
 
-The store will happily sell you "Holocene" by the Vitamin String Quartet, so the
-matcher is deliberately strict:
+### What gets thrown away
 
-- A **title match is mandatory** — never a scoring signal. The artist sweep asks
-  for "every song by X", so without a hard gate a missing track silently
-  resolves to some *other* song by the same artist. Three different Bad Bunny
-  entries collapsed onto `NUEVAYoL` before this existed.
-- Per-track lookups **try the credited artist first**, and only fall back to a
-  different performer for packs marked `looseArtist` (`classical`, `vgm`,
-  `screen`), where the catalog credits a composer and the store credits an
-  orchestra.
-- Cover mills, karaoke, lullaby and sped-up re-uploads are filtered by name.
-- Variant tags like `(Acoustic)` or `[Remix]` are stripped, so `Creep` can match
-  Radiohead's own acoustic cut when that's the only version on sale — while
-  every cover band stays out.
-- Artist comparison requires **every** word of the shorter name to appear in the
-  longer one. A single shared token isn't enough: Frank Ocean and Billy Ocean
-  are not the same person, and `Nights` resolved to the wrong one until this.
+The store sells plenty of things you should not have to guess from 0.1 seconds:
 
-Re-running discovery **prunes any stored entry that no longer passes the current
-matcher**, so tightening these rules automatically re-resolves whatever they now
-reject. Use `--targeted` for those repair runs — the artist sweep has already
-failed for anything still missing, so re-running it just burns throttled calls.
+- **Live, instrumental, karaoke, interlude, skit and intro cuts** are dropped.
+- **Remasters and radio edits are kept**, because for older catalogs they're
+  often the only version on sale. Variant tags are then stripped so the same
+  song across five releases dedups down to one.
+- **Anything under 60 seconds** is a skit, not a song.
+- **Cover mills** (karaoke, lullaby, string quartet, sped-up, 8-bit) are
+  filtered by name.
+- Results are grouped by `artistId` rather than by name, so features and
+  same-name acts don't leak in. J-pop and K-pop packs skip the name check
+  entirely, because the store credits in kana, kanji or hangul while the seed
+  list is romanized.
 
-**666 of 690 resolve.** The remaining 24 aren't on the US store at all (Tatsuro
-Yamashita famously kept his catalog off streaming). Unresolved songs are simply
-excluded — packs grey out if they can't field a round, and the smallest pack
-still carries 22 songs.
+### Difficulty comes from listening data
 
-If a preview URL ever goes stale in a deployed build, the client also
-self-heals: on a load failure it re-mints that one song from its `trackId` via
-`/lookup` (the unthrottled endpoint) and retries. Run `--refresh` and redeploy
-to fix it permanently.
+The first version of this ranked songs by a fame tier I'd assigned to each
+artist. Measured, that turned out to be ~93% of the outcome on its own, which
+made difficulty mean "how famous is the artist" rather than "how famous is the
+song" — Turnstile's biggest song landed in hard, a soundtrack cut by a famous
+artist landed in easy.
 
-### Deploying
+Apple's API has no popularity field. Deezer's does, and it needs no key, so
+`tools/rank-songs.mjs` looks up every track's `rank` there and cuts each pack
+into equal thirds by it. Roughly 98% of tracks match. The catalog and all the
+audio still come from Apple; Deezer is consulted at build time and never
+appears at runtime.
 
-1. `node tools/build-index.mjs` until it reports a full index.
-2. Commit `src/resolved.json`.
-3. Upload the folder. There's nothing to build and nothing to run — `server.mjs`
-   is for local development only.
+It's worth knowing the number tracks *recent* listening rather than all-time
+recognition, so it skews toward current hits.
 
-## Why snippets are sample-accurate
+### The anime pack knows its sources
+
+Apple's metadata has no notion of which anime a song opened. That mapping comes
+from [AnimeThemes.moe](https://animethemes.moe), whose catalog is downloaded
+once at build time (keyless API, cached). The anime pack keeps only tracks that
+match it, and each one carries its provenance — "Kimetsu no Yaiba OP1" — which
+shows on the reveal and is searchable in the guess box, because people know
+openings by show, not by title.
+
+### If a URL goes stale
+
+Apple's preview URLs are long-lived but they do rotate. On a load failure the
+client re-mints that one song from its `trackId` via `/lookup`, the unthrottled
+endpoint, and retries. Run `--refresh` and redeploy to fix it permanently.
+
+## Why snippets are sample-accurate, and how scrubbing is free
 
 An `<audio>` element plus `setTimeout` drifts 20–50ms. At the first tier that's
 a 50% error, which would make the whole game feel broken. So `src/audio.js`
 fetches the preview, decodes it once into an `AudioBuffer`, and schedules each
-slice with `source.start(when, 0, duration)` — accurate to the sample. A ~4ms
-fade in and ~15ms fade out kill the click you'd otherwise get from cutting
+slice with `source.start(when, offset, duration)`, accurate to the sample. A
+~4ms fade in and ~15ms fade out kill the click you'd otherwise get from cutting
 mid-waveform.
 
-Previews are 30 seconds, which comfortably covers the 16-second maximum
-snippet. Both the Apple preview CDN and the search API send
-`Access-Control-Allow-Origin: *`, so the browser can fetch and decode directly.
+Having the whole clip decoded up front is also what makes scrubbing cost
+nothing: any region of the buffer can be scheduled as precisely as the region
+starting at zero. Nothing streams and nothing seeks. Drag across the waveform,
+let go, and playback starts where you dropped it.
 
-## Adding songs
+The waveform you're dragging on is drawn from that same decoded buffer, and it
+always shows exactly the window you've unlocked, stretched to full width. A
+fixed 16-second axis would render the first tier as 0.6% of the element, far too
+small to put a cursor on.
 
-Everything lives in `src/catalog.js` as `[title, artist]` pairs:
+Previews are 30 seconds, which comfortably covers the 16-second maximum. Both
+the Apple preview CDN and the search API send `Access-Control-Allow-Origin: *`,
+so the browser can fetch and decode directly.
+
+### Clips are aligned to their first audible sample
+
+Apple cuts previews at a fixed offset into the track rather than at a musical
+boundary, so some open on silence or a fade-in — about 4% of them by more than
+100ms. At the 0.1 second tier that is an unwinnable round: you spend guesses on
+nothing. Every time on the player is therefore measured from where the music
+actually starts, found by scanning for 100ms of sustained signal above a share of
+the clip's own loudness. The first tier is always a tenth of a second of real
+audio.
+
+## Adding artists
+
+Everything lives in `src/artists.js`:
 
 ```js
 {
-  id: 'shoegaze', name: 'Shoegaze', emoji: '🌫️',
-  blurb: 'Loud, blurry, reverent',
-  tracks: [
-    ['Only Shallow', 'My Bloody Valentine'],
-    ['Vapour Trail', 'Ride'],
+  id: 'rock', name: 'Rock', code: 'RCK',
+  color: '#E4483F',
+  blurb: 'Riffs, arenas and college radio',
+  artists: [
+    ['My Bloody Valentine', 3],
+    ['Ride', 3],
   ],
 }
 ```
 
-Strings are sent verbatim to iTunes, so match how the track is credited on
-Apple Music — punctuation and accents are normalized away before matching, but
-a wrong artist won't resolve. Then run `node tools/build-index.mjs`; it prints
-anything that failed, plus anything that resolved to a suspiciously different
-artist, which is how you catch typos.
+The number is a fame tier: `1` household name, `2` well known inside the genre,
+`3` deeper cut. It only has to be roughly right, since it feeds a ranking rather
+than a threshold.
 
-Aim for 20+ tracks per pack — the guess autocomplete only searches the packs
-you've selected, so a thin pack is easy to brute-force. Packs with nothing in
-the manifest are greyed out automatically rather than dealing an unplayable
-round.
+A new genre also needs a `color`, and that colour must clear 4.5:1 against
+either `#17170e` or `#f7f7f5` — the two ink options a filled crate picks between
+at runtime. There is an audit command in `CLAUDE.md`.
+
+Optional per-genre flags: `minYear` (pop is `2000`) and `nativeScript: true`,
+which turns off the artist-name gate for catalogs the store credits in kana,
+kanji or hangul.
+
+Then run `node tools/build-packs.mjs`. Cached artists are skipped, so adding ten
+names costs ten requests rather than a rebuild. It prints each pack's totals and
+flags any pack that came in under 500 songs.
 
 ## Layout
 
 | File | What it does |
 | --- | --- |
 | `index.html` | Markup and dialogs |
-| `styles.css` | All styling; dark by default, light via `prefers-color-scheme` |
-| `src/catalog.js` | The 24 packs |
-| `src/resolved.json` | **The song manifest — generated, and the only data the game reads** |
-| `src/itunes.js` | Search/lookup/matching. Build-time only, apart from the self-heal |
-| `src/audio.js` | Web Audio snippet player |
-| `src/app.js` | Game state, UI, stats, sharing |
-| `tools/build-index.mjs` | Generates the manifest |
+| `styles.css` | All styling, both themes, all design tokens |
+| `fonts/` | Self-hosted Archivo and IBM Plex Mono |
+| `src/artists.js` | **The hand-edited source: 23 genres, seed artists, tiers, colours** |
+| `src/packs/*.json` | **Generated, and the only song data the game reads** |
+| `src/catalog.js` | Loads the pack index and pack files on demand |
+| `src/itunes.js` | Normalizing, matching and `/lookup` |
+| `src/audio.js` | Web Audio player: decode, slice, scrub, volume, peaks |
+| `src/app.js` | Game state, UI, waveform, stats, sharing |
+| `tools/build-packs.mjs` | Generates the packs |
 | `server.mjs` | Local dev static server |
 
-## Modes and storage
+Pack files are fetched on demand, so picking one pack downloads one pack rather
+than the whole catalog.
 
-**Daily** picks one song per day per pack combination, seeded from the date, so
-everyone with the same packs gets the same song. Finishing it saves the result;
-reopening shows what you got. **Endless** is unlimited and avoids the last 60
-songs you saw.
+## The crate
 
-Stats, pack selection, and the daily result live in `localStorage` under the
-`earworm.` prefix. There's no backend and nothing leaves the browser.
+The interface is a record crate: genres are tabbed folders you flip through and
+pull out, each with its own colour, saturated when selected and drained when
+not. It owes the folder-stack idea to [Mosby's Files](https://www.mosbyfiles.com/).
+
+Colour is the primary signal rather than decoration, which is why every crate
+colour has to clear 4.5:1 against one of the two ink options, and why the text
+colour on a filled crate is computed at runtime rather than set by hand. During
+a round the crate colours are deliberately absent — tinting the game screen with
+the pack's hue would leak which crate the song came from. The colour arrives on
+the reveal, where the answer appears as its own crate's folder.
+
+## Modes, keys and storage
+
+**Daily** seeds both the crate and the song off the date. Every difficulty is in
+play, and you get one attempt; reopening shows what you got. Seeding the crate as
+well keeps the load to a single pack file, and the genre is public knowledge,
+which is the fair version of the puzzle since everyone gets that same hint.
+**Endless** reads your crate selection and difficulty, avoids the last 200 songs
+you saw, and never ends.
+
+`Space` plays the current clip. `T` toggles the theme and `?` opens help. On the
+waveform, arrow keys nudge the cue and `Enter` plays. The wordmark takes you home
+from anywhere.
+
+Dark is the default because the game is usually played in headphones; the theme
+follows your OS until you press `T`, which overrides it.
+
+Crate selection, difficulty, volume, theme and the daily result live in
+`localStorage` under the `earworm.` prefix. There is no stats screen. There's no backend and nothing
+leaves the browser.

@@ -1,4 +1,5 @@
-tools/build.log
+tools/*.log
 node_modules/
 .DS_Store
 Thumbs.db
+tools/cache/

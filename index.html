@@ -3,37 +3,74 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Earworm — name the song from 0.1 seconds</title>
-<meta name="description" content="A Songless-style music guessing game across 24 genre packs, from city pop to amapiano.">
+<title>Earworm</title>
+<meta name="description" content="Name the song from a tenth of a second. Twenty-three genres, thousands of songs, three difficulties.">
+<meta name="theme-color" content="#0E0E10">
+<link rel="preload" href="fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/plexmono-400-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎧</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230E0E10'/><g fill='%23F0C231'><rect x='2' y='6' width='1.6' height='4'/><rect x='5' y='3' width='1.6' height='10'/><rect x='8' y='5' width='1.6' height='6'/><rect x='11' y='2' width='1.6' height='12'/></g></svg>">
 </head>
 <body>
 
 <header class="topbar">
-  <h1 class="logo">ear<span>worm</span></h1>
-  <div class="modes" role="group" aria-label="Game mode">
-    <button id="mode-daily" class="mode" type="button" aria-pressed="true">Daily</button>
-    <button id="mode-endless" class="mode" type="button" aria-pressed="false">Endless</button>
-  </div>
-  <div class="topbar-actions">
-    <button id="open-help" class="icon-btn" type="button" aria-label="How to play">?</button>
-    <button id="open-stats" class="icon-btn" type="button" aria-label="Statistics">▤</button>
-  </div>
+  <button id="go-home" class="wordmark" type="button" aria-label="Earworm, back to start">
+    Earworm
+  </button>
+  <span id="breadcrumb" class="breadcrumb"></span>
+  <button id="open-help" class="keybtn" type="button" data-key="?">Help</button>
+  <button id="toggle-theme" class="keybtn" type="button" data-key="T">Theme</button>
 </header>
 
 <main>
 
-  <!-- ------------------------------------------------------------- setup -->
-  <section id="setup">
-    <p class="lede">
-      Pick your genres. You get <span id="tier-legend"></span> of the intro —
-      every skip or wrong guess buys you more.
-    </p>
-    <div id="pack-grid" class="pack-grid"></div>
-    <div class="setup-foot">
-      <span id="pack-summary" class="muted"></span>
-      <button id="start" class="primary" type="button">Play</button>
+  <!-- -------------------------------------------------------------- home -->
+  <section id="home">
+    <h1 class="display" data-reveal>Earworm</h1>
+    <p class="tagline" data-reveal style="--d:80ms">Name the song from a tenth of a second.</p>
+
+    <div class="modes">
+      <button id="pick-daily" class="mode" type="button" style="--c:#F0C231; --d:60ms" data-reveal>
+        <span class="mode-kicker">Daily</span>
+        <span class="mode-name">Today's song</span>
+        <span class="mode-blurb">One track, one genre, the same for everyone. One go at it.</span>
+        <span id="daily-crate" class="mode-meta">—</span>
+      </button>
+
+      <button id="pick-endless" class="mode" type="button" style="--c:#2AB8C4; --d:120ms" data-reveal>
+        <span class="mode-kicker">Endless</span>
+        <span class="mode-name">Play on</span>
+        <span class="mode-blurb">Pick your genres and difficulty, then keep going.</span>
+        <span id="endless-count" class="mode-meta">—</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------- crate -->
+  <section id="crate" hidden>
+    <h2 class="display display--sm" data-reveal>Pick your genres</h2>
+
+    <div class="picker-head" data-reveal>
+      <p class="label" id="packs-label">Genres</p>
+      <div class="bulk">
+        <button id="select-all" class="linky" type="button">All</button>
+        <button id="select-none" class="linky" type="button">Clear</button>
+      </div>
+    </div>
+
+    <div id="pack-chips" class="chips" role="group" aria-labelledby="packs-label" data-reveal>
+      <div class="skeleton">
+        <div class="skeleton-bar"></div>
+        <div class="skeleton-bar"></div>
+      </div>
+    </div>
+
+    <p class="label" id="diff-label" data-reveal>Difficulty</p>
+    <div id="difficulty" class="segmented" role="group" aria-labelledby="diff-label" data-reveal></div>
+
+    <div class="picker-foot" data-reveal>
+      <span id="pack-summary" class="summary"></span>
+      <button id="start" class="btn btn--go" type="button">Start</button>
     </div>
   </section>
 
@@ -41,92 +78,110 @@
   <section id="game" hidden>
     <p id="status" class="status" hidden></p>
 
-    <div class="player">
-      <button id="play" class="play" type="button" aria-label="Play snippet">
-        <svg viewBox="0 0 24 24" class="ico-play" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
-        <svg viewBox="0 0 24 24" class="ico-stop" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>
+    <div class="transport">
+      <button id="play" class="play" type="button" aria-label="Play clip">
+        <svg class="ico-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16l13-8z"/></svg>
+        <svg class="ico-stop" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>
       </button>
-      <div class="track">
-        <div class="rail">
-          <div id="unlocked" class="unlocked"></div>
-          <div id="ticks"></div>
+
+      <div class="scope">
+        <div id="wave-wrap" class="wave-wrap">
+          <canvas id="wave"></canvas>
+          <div id="cue" class="cue" style="left:0"></div>
           <div id="playhead" class="playhead"></div>
         </div>
-        <div class="rail-labels">
-          <span id="snippet-label">0.1s</span>
-          <span class="muted">16s</span>
+        <div class="wave-meta">
+          <span id="clock">0.00 / 0.10</span>
+          <span id="scrub-hint" class="hint">Drag to scrub</span>
         </div>
       </div>
+    </div>
+
+    <div id="ladder" class="ladder" role="img" aria-label="Unlocked audio"></div>
+
+    <div class="volume">
+      <label for="volume">Vol</label>
+      <input id="volume" type="range" min="0" max="100" value="80" aria-label="Volume">
+      <output id="volume-out" for="volume">80%</output>
     </div>
 
     <ol id="guesses" class="guesses"></ol>
 
     <div class="guess-wrap">
       <input id="guess" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
-             placeholder="Know it? Start typing a title or artist…"
+             placeholder="Type a title or an artist"
              role="combobox" aria-expanded="false" aria-controls="suggest" aria-autocomplete="list">
-      <ul id="suggest" class="suggest" role="listbox" hidden></ul>
+      <ul id="suggest" class="suggest" role="listbox" aria-label="Matching songs" hidden></ul>
     </div>
 
     <div class="controls">
-      <button id="skip" class="ghost" type="button">Skip</button>
-      <span id="remaining" class="muted"></span>
-      <button id="submit" class="primary" type="button" disabled>Guess</button>
+      <button id="skip" class="btn" type="button">Skip</button>
+      <button id="submit" class="btn btn--go" type="button" disabled>Guess</button>
+      <span id="remaining" class="remaining"></span>
     </div>
 
     <!-- ----------------------------------------------------------- reveal -->
     <div id="reveal" class="reveal" hidden>
-      <p id="reveal-verdict" class="verdict"></p>
-      <div class="reveal-card">
-        <img id="reveal-art" alt="" width="96" height="96">
+      <div id="reveal-card" class="reveal-card" style="--c:#F0C231">
+        <span id="reveal-verdict" class="reveal-verdict"></span>
+        <img id="reveal-art" alt="" width="104" height="104" hidden>
         <div class="reveal-meta">
-          <strong id="reveal-title"></strong>
-          <span id="reveal-artist"></span>
-          <span id="reveal-album" class="muted"></span>
-          <span id="reveal-pack" class="chip"></span>
+          <span id="reveal-title" class="reveal-title"></span>
+          <span id="reveal-artist" class="reveal-artist"></span>
+          <span id="reveal-album" class="reveal-album"></span>
         </div>
       </div>
-      <div class="reveal-actions">
-        <button id="share" class="primary" type="button">Share</button>
-        <button id="next" class="ghost" type="button">Next song</button>
-        <a id="reveal-link" class="ghost link" target="_blank" rel="noopener">Open in Apple Music</a>
-      </div>
-      <p id="daily-note" class="muted small" hidden>
-        That's today's daily for these packs. Switch to Endless to keep going.
-      </p>
-    </div>
 
-    <button id="change-packs" class="linkish" type="button">← Change packs</button>
+      <div class="reveal-actions">
+        <button id="share" class="btn btn--go" type="button">Share</button>
+        <button id="next" class="btn" type="button">Next song</button>
+        <a id="reveal-link" class="btn btn--quiet" target="_blank" rel="noopener">Apple Music</a>
+        <button id="view-board" class="btn btn--quiet" type="button" data-close hidden>View board</button>
+      </div>
+
+      <p id="daily-note" class="note" hidden></p>
+    </div>
   </section>
 </main>
 
 <!-- ------------------------------------------------------------- dialogs -->
+<dialog id="reveal-dialog" class="reveal-dialog" aria-label="Round result"></dialog>
+
 <dialog id="help-dialog">
   <h2>How to play</h2>
   <ol class="help-list">
     <li>You hear the first <strong>0.1 seconds</strong> of a song.</li>
-    <li>Guess the title, or skip. Either way the snippet grows:
-        0.1s → 0.5s → 1s → 2s → 4s → 8s → 16s.</li>
-    <li>Seven tries. The faster you get it, the better the share grid looks.</li>
+    <li>Guess it, or skip. Either way the clip grows:
+        <strong>0.1, 0.5, 1, 2, 4, 8, 16 seconds</strong>.</li>
+    <li>Drag across the waveform to <strong>scrub</strong> anywhere inside what you
+        have unlocked, then hit play.</li>
+    <li>Seven tries. The sooner you get it, the better the share grid looks.</li>
   </ol>
-  <p class="muted small">
-    Snippets come from Apple Music's public 30-second previews, so the clip
-    usually starts partway into the song rather than at the very first note.
-  </p>
-  <button data-close class="primary" type="button">Got it</button>
-</dialog>
 
-<dialog id="stats-dialog">
-  <h2>Statistics</h2>
-  <div class="stat-grid">
-    <div><strong id="stat-played">0</strong><span>Played</span></div>
-    <div><strong id="stat-win">—</strong><span>Win %</span></div>
-    <div><strong id="stat-streak">0</strong><span>Streak</span></div>
-    <div><strong id="stat-best">0</strong><span>Best</span></div>
+  <h3>Daily and Endless</h3>
+  <ol class="help-list">
+    <li><strong>Daily</strong> picks one genre and one song a day. Everyone gets
+        the same one, and you get one go.</li>
+    <li><strong>Endless</strong> is yours: choose the genres and the difficulty,
+        and keep playing.</li>
+  </ol>
+
+  <h3>Keys</h3>
+  <ol class="help-list">
+    <li><strong>Space</strong> plays the current clip.</li>
+    <li><strong>T</strong> switches theme, <strong>?</strong> opens this box.</li>
+    <li>On the waveform, <strong>arrows</strong> nudge the cue and
+        <strong>Enter</strong> plays.</li>
+  </ol>
+
+  <p class="note">
+    Clips are Apple Music's public 30 second previews, so they usually start
+    partway into a song rather than at the very first note.
+  </p>
+
+  <div class="dialog-foot">
+    <button data-close class="btn btn--go" type="button">Got it</button>
   </div>
-  <h3>Won at</h3>
-  <div id="stat-dist" class="dist"></div>
-  <button data-close class="primary" type="button">Close</button>
 </dialog>
 
 <script type="module" src="src/app.js"></script>
