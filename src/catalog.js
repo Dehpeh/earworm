@@ -10,7 +10,7 @@
 //
 // Nothing here calls a music API. See CLAUDE.md for why that matters.
 
-import { norm } from './itunes.js';
+import { norm, workFromTheme } from './itunes.js';
 
 const BASE = new URL('./packs/', import.meta.url);
 
@@ -36,14 +36,23 @@ function expand(row, pack) {
   // scans every loaded track on every input event, and norm() runs an NFD
   // normalize plus five replaces; at ~3000 tracks that was the slowest thing
   // in the typing path.
+  const media = row.m || '';
+  // The *work* is the guessable name behind the media credit: the show for an
+  // anime theme ("Naruto: Shippuuden" out of "Naruto: Shippuuden OP3"), the
+  // game for a soundtrack cut (already bare, the slot strip is a no-op).
+  // Naming it is as good as naming the song.
+  const work = workFromTheme(media);
   return {
     id: String(row.i),
     nt: norm(row.t),
     na: norm(row.a),
-    // Anime tracks carry their source ("Kimetsu no Yaiba OP1"). It is part of
-    // the searchable text on purpose: people know openings by show, not title.
-    media: row.m || '',
-    nm: norm(row.m || ''),
+    // Anime tracks carry their source ("Kimetsu no Yaiba OP1"), game tracks
+    // the game. It is part of the searchable text on purpose: people know
+    // openings by show, not title.
+    media,
+    nm: norm(media),
+    work,
+    nw: norm(work),
     packId: pack.id,
     packName: pack.name,
     packCode: pack.code,
@@ -76,7 +85,7 @@ export async function loadTracks(packs) {
 }
 
 export const DIFFICULTIES = [
-  { id: 1, name: 'Easy', key: 'easy', note: 'Songs you have heard' },
-  { id: 2, name: 'Medium', key: 'medium', note: 'Deeper in the catalog' },
+  { id: 1, name: 'Easy', key: 'easy', note: 'The hits' },
+  { id: 2, name: 'Medium', key: 'medium', note: 'Known if you know the genre' },
   { id: 3, name: 'Hard', key: 'hard', note: 'Album tracks and B-sides' },
 ];

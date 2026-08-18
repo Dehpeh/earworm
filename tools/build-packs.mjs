@@ -25,7 +25,15 @@
 
 import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
 import { GENRES } from '../src/artists.js';
-import { norm, coreTitle, artistMatches, lookupIds, JUNK, RateLimited } from '../src/itunes.js';
+import {
+  norm,
+  coreTitle,
+  artistMatches,
+  lookupIds,
+  workFromAlbum,
+  JUNK,
+  RateLimited,
+} from '../src/itunes.js';
 
 const SEARCH = 'https://itunes.apple.com/search';
 const LOOKUP_URL = 'https://itunes.apple.com/lookup';
@@ -292,6 +300,10 @@ function harvest(genre, themes) {
         // behind it is not an anime theme, however good the artist.
         media = themeFor(themes, artist, r);
         if (!media) continue;
+      } else if (genre.mediaFromAlbum) {
+        // Soundtrack packs: the game's name lives in the album title. Peeled
+        // out here so "Hades" is a valid answer for any Hades track.
+        media = workFromAlbum(r.collectionName) || null;
       }
       rows.push({ r, tier, rank, media });
       rank++;

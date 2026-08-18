@@ -6,14 +6,14 @@ name it. Every skip or wrong guess buys you a longer clip:
 
 **Six genres — pop, rap, rock, anime, K-pop and game music — at 1,500+ songs
 each**, three difficulties. Anime tracks are labeled with their source, so the
-reveal reads "Kimetsu no Yaiba OP1", and you can search the guess box by show
-name as well as by song or artist. You can scrub around inside whatever you have unlocked instead of always
-hearing it from the top.
+reveal reads "Kimetsu no Yaiba OP1", and game tracks with their game. You can
+search the guess box by show or game as well as by song or artist, and naming
+the show or the game counts as getting it. You can scrub around inside whatever
+you have unlocked instead of always hearing it from the top.
 
-Two modes that actually differ. **Daily** seeds both the crate and the song off
-the date, so everyone gets the same one and you get a single attempt.
-**Endless** is yours: pull out the crates you want, pick a difficulty, and keep
-going.
+Two modes that actually differ. **Daily** is one song per genre per day, the
+same for everyone, one attempt each. **Endless** is yours: pull out the crates
+you want, pick a difficulty, and keep going.
 
 Static HTML/CSS/JS. No framework, no build step, no API keys, no backend.
 
@@ -130,7 +130,9 @@ artist landed in easy.
 
 Apple's API has no popularity field. Deezer's does, and it needs no key, so
 `tools/rank-songs.mjs` looks up every track's `rank` there and cuts each pack
-into equal thirds by it. Roughly 98% of tracks match. The catalog and all the
+by it: the top 15% is easy, the next 30% medium, the rest hard. Easy is meant
+to be the hits nearly everyone knows, not the top third of everything, which is
+why it is a thin slice. Roughly 98% of tracks match. The catalog and all the
 audio still come from Apple; Deezer is consulted at build time and never
 appears at runtime.
 
@@ -251,12 +253,12 @@ the reveal, where the answer appears as its own crate's folder.
 
 ## Modes, keys and storage
 
-**Daily** seeds both the crate and the song off the date. Every difficulty is in
-play, and you get one attempt; reopening shows what you got. Seeding the crate as
-well keeps the load to a single pack file, and the genre is public knowledge,
-which is the fair version of the puzzle since everyone gets that same hint.
-**Endless** reads your crate selection and difficulty, avoids the last 200 songs
-you saw, and never ends.
+**Daily** is one song per genre per day, drawn from the easy and medium bands.
+You get one attempt per genre; reopening a played tile shows what you got. Each
+genre walks a fixed shuffle of its pack one entry per day, so a song does not
+come round again until the whole pack has. Everything rolls over at local
+midnight, even in a tab left open. **Endless** reads your crate selection and
+difficulty, avoids the last 200 songs you saw, and never ends.
 
 `Space` plays the current clip. `T` toggles the theme and `?` opens help. On the
 waveform, arrow keys nudge the cue and `Enter` plays. The wordmark takes you home
@@ -265,6 +267,6 @@ from anywhere.
 Dark is the default because the game is usually played in headphones; the theme
 follows your OS until you press `T`, which overrides it.
 
-Crate selection, difficulty, volume, theme and the daily result live in
+Crate selection, difficulty, volume, theme and the daily results live in
 `localStorage` under the `earworm.` prefix. There is no stats screen. There's no backend and nothing
 leaves the browser.

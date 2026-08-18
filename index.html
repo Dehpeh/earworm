@@ -29,14 +29,22 @@
     <h1 class="display" data-reveal>Earworm</h1>
     <p class="tagline" data-reveal style="--d:80ms">Name the song from a tenth of a second.</p>
 
-    <div class="modes">
-      <button id="pick-daily" class="mode" type="button" style="--c:#F0C231; --d:60ms" data-reveal>
+    <section class="daily" aria-labelledby="daily-heading">
+      <div class="daily-head" data-reveal style="--d:60ms">
         <span class="mode-kicker">Daily</span>
-        <span class="mode-name">Today's song</span>
-        <span class="mode-blurb">One track, one genre, the same for everyone. One go at it.</span>
-        <span id="daily-crate" class="mode-meta">—</span>
-      </button>
+        <h2 id="daily-heading" class="mode-name">Today's songs</h2>
+        <p id="daily-blurb" class="mode-blurb">One song per genre, the same for everyone. One go at each.</p>
+        <span id="daily-date" class="mode-meta">—</span>
+      </div>
+      <div id="daily-list" class="daily-list" role="group" aria-label="Today's dailies by genre">
+        <div class="skeleton">
+          <div class="skeleton-bar"></div>
+          <div class="skeleton-bar"></div>
+        </div>
+      </div>
+    </section>
 
+    <div class="modes">
       <button id="pick-endless" class="mode" type="button" style="--c:#2AB8C4; --d:120ms" data-reveal>
         <span class="mode-kicker">Endless</span>
         <span class="mode-name">Play on</span>
@@ -156,12 +164,14 @@
     <li>Drag across the waveform to <strong>scrub</strong> anywhere inside what you
         have unlocked, then hit play.</li>
     <li>Seven tries. The sooner you get it, the better the share grid looks.</li>
+    <li>For <strong>Anime</strong> and <strong>Game Music</strong>, naming the show
+        or the game it is from counts too.</li>
   </ol>
 
   <h3>Daily and Endless</h3>
   <ol class="help-list">
-    <li><strong>Daily</strong> picks one genre and one song a day. Everyone gets
-        the same one, and you get one go.</li>
+    <li><strong>Daily</strong> is one song per genre a day. Everyone gets the
+        same ones, and you get one go at each.</li>
     <li><strong>Endless</strong> is yours: choose the genres and the difficulty,
         and keep playing.</li>
   </ol>

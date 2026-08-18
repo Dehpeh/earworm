@@ -7,9 +7,9 @@
    "blurb": "Chart pop, 2000 to now",
    "color": "#F0C231",
    "total": 2123,
-   "easy": 708,
-   "medium": 708,
-   "hard": 707
+   "easy": 319,
+   "medium": 637,
+   "hard": 1167
   },
   {
    "id": "rap",
@@ -18,9 +18,9 @@
    "blurb": "Hip-hop from the block parties on",
    "color": "#2E5BE8",
    "total": 2016,
-   "easy": 672,
-   "medium": 672,
-   "hard": 672
+   "easy": 303,
+   "medium": 605,
+   "hard": 1108
   },
   {
    "id": "rock",
@@ -29,9 +29,9 @@
    "blurb": "Riffs, arenas and college radio",
    "color": "#E4483F",
    "total": 2253,
-   "easy": 751,
-   "medium": 751,
-   "hard": 751
+   "easy": 338,
+   "medium": 676,
+   "hard": 1239
   },
   {
    "id": "anime",
@@ -40,9 +40,9 @@
    "blurb": "Openings, endings and inserts",
    "color": "#E8672A",
    "total": 1513,
-   "easy": 505,
-   "medium": 505,
-   "hard": 503
+   "easy": 227,
+   "medium": 454,
+   "hard": 832
   },
   {
    "id": "kpop",
@@ -51,9 +51,9 @@
    "blurb": "Idols, soloists and the Hallyu wave",
    "color": "#BC5FE3",
    "total": 1780,
-   "easy": 594,
-   "medium": 594,
-   "hard": 592
+   "easy": 267,
+   "medium": 534,
+   "hard": 979
   },
   {
    "id": "vgm",
@@ -62,9 +62,9 @@
    "blurb": "Chiptune, boss themes and open worlds",
    "color": "#4ACF8B",
    "total": 2357,
-   "easy": 786,
-   "medium": 786,
-   "hard": 785
+   "easy": 354,
+   "medium": 707,
+   "hard": 1296
   }
  ]
 }

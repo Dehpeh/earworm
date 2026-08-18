@@ -722,6 +722,9 @@ export const GENRES = [
     // The store credits arrangers, orchestras and sound teams rather than the
     // named composer, so the artist-name gate has to come off.
     nativeScript: true,
+    // Each track carries the game it is from (peeled out of the album title
+    // by workFromAlbum), so naming the game counts as a correct guess.
+    mediaFromAlbum: true,
     artists: [
       ['Koji Kondo', 1], ['Nobuo Uematsu', 1], ['Yasunori Mitsuda', 1], ['Motoi Sakuraba', 1],
       ['Shoji Meguro', 1], ['Yoko Shimomura', 1], ['Keiichi Okabe', 1], ['Toby Fox', 1],

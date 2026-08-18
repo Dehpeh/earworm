@@ -55,6 +55,51 @@ export function coreTitle(s) {
 }
 
 /**
+ * The game (or show, or film) a soundtrack album belongs to.
+ *
+ * Apple's metadata has no "from the game" field; the game's name is buried in
+ * the album title with a soundtrack tag hung off it, in a dozen house styles:
+ * "Hades: Original Soundtrack", "Undertale Soundtrack", "DOOM (Original Game
+ * Soundtrack)", "Cyberpunk 2077 - Original Score", "Minecraft - Volume Alpha".
+ * This peels the tags off so a player can answer "Hades" and be right. It is a
+ * heuristic — an artist album like "Endless Fantasy" comes back unchanged,
+ * which is harmless: it becomes an alias for that album's songs and nothing
+ * else.
+ */
+export function workFromAlbum(album) {
+  let t = String(album || '').trim();
+  if (!t) return '';
+  // Leading framing: 'Anime "Kimetsu no Yaiba" ...', 'TV Animation "Steins;Gate 0"',
+  // 'Piano Collections FINAL FANTASY ...', 'SYMPHONIC SUITE DRAGON QUEST VIII'.
+  t = t.replace(/^(tv animation|anime|piano collections|symphonic suite)\s+/i, '');
+  t = t.replace(/["“”]/g, '');
+  // Bracketed soundtrack / edition tags anywhere in the title.
+  t = t.replace(/\s*[([][^)\]]*[)\]]/g, (m) => (SOUNDTRACK_TAG.test(m) ? '' : m));
+  // Trailing "Original Soundtrack", ": The Complete Soundtrack", " - Original
+  // Score", " OST" and anything after them.
+  t = t.replace(
+    /\s*[-–—:,]?\s*(the\s+)?(complete\s+|official\s+|original\s+|super\s+)*(video\s?game\s+|game\s+|motion picture\s+|television\s+)?(sound\s?track|score|ost|music collection)\b.*$/i,
+    ''
+  );
+  // Trailing volume markers: "Minecraft - Volume Alpha", "Halo 2, Vol. 1".
+  t = t.replace(/\s*[-–—:,]?\s*(volume|vol\.?)\s+[\w.]+$/i, '');
+  return t.replace(/\s*[-–—:,]\s*$/, '').trim() || String(album).trim();
+}
+
+const SOUNDTRACK_TAG =
+  /(sound\s?track|score|\bost\b|game music|original tracks|version|edition|recording|remix|arranged|\bvol\b|disc)/i;
+
+/**
+ * The show behind an anime theme credit. The builder stores "Naruto: Shippuuden
+ * OP3"; the guessable name is the part before the slot.
+ */
+export function workFromTheme(media) {
+  return String(media || '')
+    .replace(/\s+(OP|ED|IN|OST)\d*(-[A-Za-z0-9]+)?$/i, '')
+    .trim();
+}
+
+/**
  * Whether two artist credits name the same act.
  *
  * Used to pick the right artistId out of a search that returned features and

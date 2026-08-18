@@ -515,6 +515,123 @@ main {
   opacity: 0.85;
 }
 
+/* ------------------------------------------------------------------ daily */
+
+/* One tile per crate, each in its own colour: the same folder-stack idea as
+   the picker, but every folder is a puzzle. Played tiles keep their colour and
+   show the result grid; unplayed ones are the invitation. */
+.daily {
+  display: grid;
+  gap: var(--s4);
+  margin-top: var(--s3);
+}
+
+.daily-head {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.daily-head .mode-name {
+  color: var(--ink);
+}
+
+.daily-head .mode-blurb {
+  color: var(--ink-2);
+  opacity: 1;
+}
+
+.daily-head .mode-meta {
+  color: var(--ink-3);
+  margin-top: var(--s2);
+}
+
+.daily-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: var(--s3);
+}
+
+.daily-tile {
+  --c: #888;
+  --on-c: #111;
+  display: grid;
+  gap: var(--s1);
+  align-content: start;
+  min-height: 6.5rem;
+  padding: var(--s4);
+  border: 0;
+  border-radius: var(--r);
+  background: var(--c);
+  color: var(--on-c);
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--fast) var(--ease), filter var(--fast) var(--ease);
+}
+
+.daily-tile:hover {
+  transform: translateY(-3px);
+  filter: brightness(1.07);
+}
+
+.daily-tile:active {
+  transform: translateY(-1px);
+}
+
+.daily-tile-name {
+  font-size: var(--t-md);
+  font-weight: 700;
+  font-stretch: 84%;
+  letter-spacing: -0.015em;
+  line-height: 1.1;
+}
+
+.daily-tile-status {
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.78;
+}
+
+/* Played tiles recede a touch so the unplayed ones read as "next". */
+.daily-tile.is-won,
+.daily-tile.is-lost {
+  filter: saturate(0.75) brightness(0.92);
+}
+
+.daily-tile.is-won:hover,
+.daily-tile.is-lost:hover {
+  filter: saturate(0.85) brightness(1);
+}
+
+.daily-tile-grid {
+  display: flex;
+  gap: 3px;
+  margin-top: auto;
+  padding-top: var(--s2);
+  min-height: 0.55rem;
+}
+
+.daily-tile-grid .cell {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 1px;
+  background: var(--on-c);
+  opacity: 0.18;
+}
+
+.daily-tile-grid .cell.bad {
+  opacity: 0.55;
+}
+
+.daily-tile-grid .cell.skip {
+  opacity: 0.35;
+}
+
+.daily-tile-grid .cell.ok {
+  opacity: 1;
+}
+
 /* ------------------------------------------------------------------ chips */
 
 .picker-head {
@@ -1074,6 +1191,20 @@ input[type='range']::-moz-range-thumb {
   font-size: var(--t-xs);
   margin-left: auto;
   white-space: nowrap;
+}
+
+/* A work (the anime, the game) is a different kind of answer from a song, so
+   it wears a small mark instead of pretending to be a title. */
+.suggest li.work strong::before {
+  content: '';
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-right: 0.5em;
+  border: 1.5px solid currentColor;
+  border-radius: 1px;
+  vertical-align: 0.05em;
+  opacity: 0.6;
 }
 
 .suggest li.hi {

@@ -161,12 +161,15 @@ you to guess:
    served several shows, the earliest anime wins. Store titles carry suffixes
    the theme database does not, so matching tries several candidate title keys
    and both the seed name and the store credit.
-11. **Per-genre `perArtist` caps size the packs.** The 1500+ targets are met
+11. **`mediaFromAlbum: true` stamps each track with its game.** Game music has
+   no theme database; the game's name is in the album title behind a soundtrack
+   tag, and `workFromAlbum()` peels it out into `m`. See "Guessing the work".
+12. **Per-genre `perArtist` caps size the packs.** The 1500+ targets are met
    with 16 for pop/rap/rock/kpop, 40 for game music (composer catalogs run
    deep) and 30 for anime (the theme match is the real filter there). Measured
    from cache with `--repack` before committing — never guess a cap when a
    zero-network experiment answers it.
-12. **A genre can set `minYear`.** Pop is 2000+. Filtering on release year rather
+13. **A genre can set `minYear`.** Pop is 2000+. Filtering on release year rather
    than on the seed list means an artist who spans the boundary contributes only
    the side of it the pack wants, instead of being dropped whole — Madonna gives
    you *Hung Up*, not *Like a Prayer*.
@@ -196,6 +199,33 @@ obscure.
 
 The fame tiers in `artists.js` still exist and still drive *harvest order*
 (which tracks get picked per artist). They no longer drive difficulty.
+
+**The bands are not thirds.** `BANDS` in `rank-songs.mjs` cuts easy at the top
+15% of a pack, medium at the next 30%, hard is the rest. Equal thirds was the
+first cut and it made "easy" 700 songs deep in pop, with Kim Petras album tracks
+and Cocteau Twins B-sides at the tail — nobody gets 80% of those. Easy is meant
+to be each artist's actual hits; the target is roughly 80-90% / 50% / 20%
+success for someone who knows the genre. `--reband` re-cuts from cache in
+seconds and also refreshes the per-band counts in `index.json`, which is where
+the picker reads them from.
+
+The Deezer cache lives in `tools/cache/deezer/`, gitignored like the rest. A
+cold re-rank is ~12k lookups; Deezer allows ~10/s, so run the packs as parallel
+processes with `GAP_MS=400` (about 45 minutes) rather than one process at the
+default gap. The script retries on Deezer's quota error instead of caching a
+null, so a throttle cannot poison the ranks.
+
+**Query with the fielded syntax, not free text.** `q=Someone Like You Adele`
+returns nothing but covers; `q=artist:"Adele" track:"Someone Like You"` finds
+the record. Free text alone left ~10% unmatched and the misses included "Take
+On Me", "Nothing Else Matters" and "Bye Bye Bye" — which then sank to *hard*,
+the exact opposite of the truth. The lookup now tries fielded first with the
+lead artist and the title stripped of bracketed tags (verbatim "21 Questions
+(feat. Nate Dogg)" returns zero hits), falls back to free text, and takes the
+highest rank among the hits that are this song rather than the first hit, which
+is often a live cut. Match rate is 94-100% per pack (vgm 89%). `--retry-nulls`
+re-looks-up cached misses only, which is how the query upgrade was applied
+without another 45-minute cold run.
 
 **What the number is not.** Deezer's rank tracks recent listening, not all-time
 recognition — "The Fate of Ophelia" outranks "Bohemian Rhapsody" on it. It is a
@@ -247,15 +277,44 @@ Previews are 30s, so 16s is the practical ceiling for the tier ladder.
 
 The two modes are genuinely different, not two shuffles of the same thing:
 
-- **Daily** seeds *both* the crate and the song off the date. Everyone gets the
-  same one, every difficulty is in play, and you get one attempt, saved under
-  `earworm.daily.<date>`. Seeding the crate as well is what keeps the load to a
-  single pack file, and the genre is public knowledge, which is the fair version
-  of the puzzle since everyone gets that same hint.
+- **Daily** is one song *per genre* per day, one attempt each, drawn from the
+  easy and medium bands (one shot at a hard-band B-side is not a puzzle, it is
+  a coin you cannot win), saved under `earworm.daily.<date>.<packId>`. The home
+  screen is a tile per crate; opening a played tile replays its reveal.
 - **Endless** is the one that reads your crate selection and difficulty, avoids
   the last 200 songs you saw, and never ends.
 
+**The daily song is not a hash of the date.** `dailyOrder()` gives each pack one
+fixed shuffle (seeded on the pack id, over tracks sorted by id so file order is
+irrelevant) and day N plays entry N. A per-day hash repeats by chance inside a
+couple of months at these pack sizes; the walk cannot repeat until the pack is
+exhausted. A rebuild that adds songs reshuffles, which is accepted.
+
+**Midnight is handled, twice.** `state.daily.date` is pinned when the round is
+dealt so a game that crosses midnight saves under the day it was dealt for, and
+`rollover()` (a timer for the next local midnight plus `visibilitychange`, since
+laptops sleep through timers) redraws a visible home screen for the new day.
+
 There is no stats screen. It was removed deliberately.
+
+## Guessing the work, not the song
+
+For anime and game music, naming what the song is *from* counts. Each track
+carries `media` (the builder's `m`: "Naruto: Shippuuden OP3", or the game name
+peeled out of the album title by `workFromAlbum()` for genres flagged
+`mediaFromAlbum`) and `catalog.js` derives `work` from it by dropping the OP/ED
+slot. `setSearchPool()` collects the distinct works; they appear in the
+autocomplete as their own rows (marked `.work`, ranked prefix-first then by song
+count) and `submitGuess()` treats a pick as correct when its `nw` equals the
+answer's — whether the pick is the work itself or *another song from the same
+work*. If you know it is Naruto, you know it is Naruto.
+
+`workFromAlbum()` is a heuristic over Apple's soundtrack-title house styles. It
+was dry-run over every vgm album before shipping; artist albums with no game
+("Endless Fantasy", "Level 2") pass through unchanged, which just makes the album
+an alias for its own songs. `src/packs/vgm.json` was stamped with `m` directly
+because the build cache is not on every machine; a future `--repack` produces
+the same values from `record()`.
 
 ## UI
 
@@ -319,6 +378,10 @@ Other things worth knowing before restyling:
 - **`.help-list li` is normal flow, not grid.** Those items mix text nodes and
   inline `<strong>`; as grid children each becomes its own row and the copy
   shatters into one word per line.
+- **Clicking the scrim closes any dialog.** The test is geometric (click point
+  outside `getBoundingClientRect()`), not `e.target === dialog`, because a
+  click on the dialog's own padding also targets the dialog and must not close
+  it.
 - **The reveal is a modal, and the `#reveal` node *moves*.** On round end it is
   appended into `#reveal-dialog` and popped centre-screen; on close it is
   appended back into `#game`, so the board keeps an inline record. One node, one
@@ -365,8 +428,10 @@ console.log(bad.length?'FAIL '+bad.map(g=>g.code):'all crates clear 4.5:1');"
 ```
 
 `localStorage` keys are all prefixed `earworm.`; `localStorage.clear()` gives a
-clean slate. Daily results are keyed by date, pack signature *and* difficulty, so
-changing any of the three gives you a different daily puzzle.
+clean slate. Daily results are keyed `earworm.daily.<date>.<packId>`; delete one
+and the same song is dealt again, since the pick is deterministic. To preview
+tomorrow without waiting, shadow `Date` in the console before clicking home:
+`const R=Date; Date=class extends R{constructor(...a){a.length?super(...a):super(R.now()+864e5)}}`.
 
 ## Deploy
 

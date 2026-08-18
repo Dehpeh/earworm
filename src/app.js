@@ -57,6 +57,19 @@ function todayKey() {
   ).padStart(2, '0')}`;
 }
 
+/** Days since epoch, in the player's local calendar. Steps once at local midnight. */
+function dayIndex(key = todayKey()) {
+  const [y, m, d] = key.split('-').map(Number);
+  return Math.floor(Date.UTC(y, m - 1, d) / 86400000);
+}
+
+/** Milliseconds until the next local midnight. */
+function msToMidnight() {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 50);
+  return Math.max(1000, next - now);
+}
+
 /* ------------------------------------------------------------------ colour */
 
 function relLum(hex) {
@@ -93,7 +106,13 @@ const state = {
   index: [],
   pool: [], // candidate answers
   searchPool: [], // autocomplete space
+  works: [], // guessable shows/games behind the pool, for autocomplete
   round: null,
+  /** The daily being played: { pack, date }. Pinned at start so a round that
+   *  crosses midnight still saves under the day it was dealt for. */
+  daily: null,
+  /** The date the home screen was last drawn for, to catch rollover. */
+  homeDate: null,
   pending: null,
   hi: -1,
   matches: [],
@@ -152,7 +171,7 @@ function show(screen) {
       ? 'Endless'
       : screen === 'game'
       ? state.mode === 'daily'
-        ? `Daily · ${todayKey()}`
+        ? `Daily · ${state.daily?.pack.name || ''} · ${state.daily?.date || todayKey()}`
         : 'Endless'
       : '';
   window.scrollTo({ top: 0, behavior: 'instant' });
@@ -162,36 +181,109 @@ function show(screen) {
 /* --------------------------------------------------------------------- home */
 
 /**
- * Daily is one genre and one song per day, the same for everyone, drawn from
- * the whole library rather than from whatever you last selected. Seeding the
- * *genre* off the date as well means only one pack file has to load, and the
- * genre is public knowledge — which is the fair version of the puzzle, since
- * everyone gets that same hint.
+ * Daily is one song per genre per day, the same for everyone, every difficulty
+ * in play, one attempt each. Results live under `daily.<date>.<packId>`.
+ *
+ * The song is not a hash of the date. Each pack has one fixed shuffle (seeded
+ * on the pack id, over tracks sorted by id so the file order does not matter),
+ * and day N plays entry N of that shuffle. That guarantees no repeat until the
+ * whole pack has been played — a per-day hash would repeat by chance within a
+ * couple of months. A rebuild that adds songs reshuffles, which is fine.
  */
-function dailyPack() {
-  const avail = playablePacks();
-  if (!avail.length) return null;
-  const rand = mulberry32(hash32('crate|' + todayKey()));
-  return avail[Math.floor(rand() * avail.length)];
+function dailyKey(packId, date) {
+  return `daily.${date}.${packId}`;
+}
+
+function dailyResult(packId, date = todayKey()) {
+  return store.get(dailyKey(packId, date), null);
+}
+
+/** Candidate order for a pack's daily: today's entry first, then walk on. */
+function dailyOrder(pool, packId, date) {
+  const bag = pool.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const rand = mulberry32(hash32('daily|' + packId));
+  for (let i = bag.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [bag[i], bag[j]] = [bag[j], bag[i]];
+  }
+  const start = dayIndex(date) % bag.length;
+  return bag.slice(start).concat(bag.slice(0, start));
 }
 
 function renderHome() {
-  const dp = dailyPack();
-  el.dailyCrate.textContent = dp ? dp.name : '—';
-  if (dp) {
-    el.pickDaily.style.setProperty('--c', dp.color);
-    el.pickDaily.style.setProperty('--on-c', inkOn(dp.color));
-  }
-  el.pickDaily.disabled = !dp;
+  const date = todayKey();
+  state.homeDate = date;
+  el.dailyDate.textContent = date;
 
-  const total = playablePacks().reduce((n, p) => n + p.total, 0);
+  el.dailyList.innerHTML = '';
+  const packs = playablePacks();
+  let played = 0;
+  packs.forEach((p, i) => {
+    const res = dailyResult(p.id, date);
+    if (res) played++;
+    const b = document.createElement('button');
+    b.className = 'daily-tile' + (res ? (res.won ? ' is-won' : ' is-lost') : '');
+    b.type = 'button';
+    b.style.setProperty('--c', p.color || '#888');
+    b.style.setProperty('--on-c', inkOn(p.color || '#888888'));
+    b.style.setProperty('--d', `${120 + i * 45}ms`);
+    b.setAttribute('data-reveal', '');
+    const status = res
+      ? res.won
+        ? `Got it at ${TIERS[res.guesses.length - 1]}s`
+        : 'Missed'
+      : 'Not played';
+    b.setAttribute('aria-label', `${p.name} daily, ${status}`);
+    b.innerHTML =
+      `<span class="daily-tile-name">${escapeHtml(p.name)}</span>` +
+      `<span class="daily-tile-status">${escapeHtml(status)}</span>` +
+      `<span class="daily-tile-grid" aria-hidden="true">${res ? miniGrid(res.guesses) : ''}</span>`;
+    b.addEventListener('click', () => {
+      player.unlock();
+      startDaily(p);
+    });
+    el.dailyList.append(b);
+  });
+  el.dailyBlurb.textContent = !packs.length
+    ? 'No crates are built yet.'
+    : played === 0
+    ? 'One song per genre, the same for everyone. One go at each.'
+    : played === packs.length
+    ? 'All done for today. New songs at midnight.'
+    : `${played} of ${packs.length} played today.`;
+
+  const total = packs.reduce((n, p) => n + p.total, 0);
   el.endlessCount.textContent = total ? `${total.toLocaleString()} songs` : '—';
   el.pickEndless.disabled = !total;
+}
 
-  const done = store.get('daily.' + todayKey(), null);
-  el.pickDaily.querySelector('.mode-blurb').textContent = done
-    ? 'Already played today. Open it to see how you did.'
-    : 'One track, one genre, the same for everyone. One go at it.';
+/** The share-grid squares as tiny cells, for the home tiles. */
+function miniGrid(guesses) {
+  return TIERS.map((_, i) => {
+    const g = guesses[i];
+    const k = !g ? '' : g.kind === 'correct' ? ' ok' : g.kind === 'skip' ? ' skip' : ' bad';
+    return `<i class="cell${k}"></i>`;
+  }).join('');
+}
+
+/**
+ * The tab may sit open across midnight. Nothing here polls: a timer set for
+ * the next local midnight, plus a check whenever the tab comes back into view
+ * (laptops sleep through timers), redraws the home screen for the new day.
+ */
+let midnightTimer = 0;
+
+function armMidnight() {
+  clearTimeout(midnightTimer);
+  midnightTimer = setTimeout(rollover, msToMidnight());
+}
+
+function rollover() {
+  armMidnight();
+  // Other screens redraw home on the way back, so only a visible home is stale.
+  if (state.screen !== 'home' || state.homeDate === todayKey()) return;
+  renderHome();
+  playReveal(el.home);
 }
 
 /* --------------------------------------------------------------- pack picker */
@@ -271,13 +363,9 @@ function renderSummary() {
 
 /* --------------------------------------------------------------- round setup */
 
-/** Order the pool so we can walk it if the first pick will not load. */
-function candidateOrder(pool, seed) {
-  if (seed) {
-    const rand = mulberry32(hash32(seed));
-    const start = Math.floor(rand() * pool.length);
-    return Array.from({ length: pool.length }, (_, i) => pool[(start + i * 7 + i) % pool.length]);
-  }
+/** Endless order: shuffled, avoiding the last 200 songs, so we can walk it if
+ *  the first pick will not load. */
+function candidateOrder(pool) {
   const recent = new Set(store.get('recent', []));
   const fresh = pool.filter((t) => !recent.has(t.id));
   const bag = (fresh.length >= 5 ? fresh : pool).slice();
@@ -310,26 +398,26 @@ async function remintPreview(track) {
   }
 }
 
-async function startDaily() {
+async function startDaily(pack) {
   state.mode = 'daily';
+  state.daily = { pack, date: todayKey() };
   show('game');
-  resetGameChrome('Loading today’s crate');
+  resetGameChrome(`Loading today’s ${pack.name}`);
 
-  const pack = dailyPack();
-  if (!pack) {
-    el.status.textContent = 'No crates are built yet. Run node tools/build-packs.mjs.';
-    return;
-  }
   try {
-    state.searchPool = await loadTracks([pack]);
+    setSearchPool(await loadTracks([pack]));
   } catch {
     el.status.textContent = 'Could not load the song data.';
     return;
   }
-  // Every difficulty is in play: the daily is not tuned to your preferences.
-  state.pool = state.searchPool;
+  // The daily is not tuned to your preferences, but it is one shot, so it
+  // draws from easy and medium: a puzzle everyone gets exactly one go at
+  // should be one most people can get. Hard stays in Endless. (Falls back to
+  // the whole pack if a pack somehow has nothing below hard.)
+  const gettable = state.searchPool.filter((t) => t.difficulty < 3);
+  state.pool = gettable.length ? gettable : state.searchPool;
 
-  const saved = store.get('daily.' + todayKey(), null);
+  const saved = dailyResult(pack.id, state.daily.date);
   if (saved) {
     const track = state.searchPool.find((t) => t.id === saved.id);
     if (track) {
@@ -340,7 +428,23 @@ async function startDaily() {
       return;
     }
   }
-  await dealFrom(candidateOrder(state.pool, 'song|' + todayKey() + '|' + pack.id));
+  await dealFrom(dailyOrder(state.pool, pack.id, state.daily.date));
+}
+
+/** Install the autocomplete space and derive the guessable works behind it. */
+function setSearchPool(tracks) {
+  state.searchPool = tracks;
+  const byKey = new Map();
+  for (const t of tracks) {
+    if (!t.nw) continue;
+    const w = byKey.get(t.nw);
+    if (w) w.count++;
+    else byKey.set(t.nw, { kind: 'work', nw: t.nw, work: t.work, packId: t.packId, count: 1 });
+  }
+  state.works = [...byKey.values()];
+  el.guessInput.placeholder = state.works.length
+    ? 'Type a title, an artist, or what it’s from'
+    : 'Type a title or an artist';
 }
 
 async function startEndless() {
@@ -350,7 +454,7 @@ async function startEndless() {
 
   const packs = state.index.filter((p) => state.packs.has(p.id));
   try {
-    state.searchPool = await loadTracks(packs);
+    setSearchPool(await loadTracks(packs));
   } catch {
     el.status.textContent = 'Could not load the song data. Run node tools/build-packs.mjs.';
     return;
@@ -360,7 +464,7 @@ async function startEndless() {
     el.status.textContent = 'No songs at this difficulty. Pick another genre or difficulty.';
     return;
   }
-  await dealFrom(candidateOrder(state.pool, null));
+  await dealFrom(candidateOrder(state.pool));
 }
 
 function resetGameChrome(message) {
@@ -673,6 +777,12 @@ function advance(entry) {
   player.play(0, TIERS[r.tier]);
 }
 
+/**
+ * A guess is either a song or a work (the anime a theme opened, the game a
+ * soundtrack cut is from). Naming the right work counts, and so does naming
+ * another song from the same work — if you know it is Naruto, you know it is
+ * Naruto.
+ */
 function submitGuess() {
   const r = state.round;
   if (!r || r.done) return;
@@ -680,18 +790,28 @@ function submitGuess() {
   if (!pick) {
     const typed = norm(el.guessInput.value);
     if (!typed) return;
-    pick = state.searchPool.find((t) => t.nt === typed || norm(t.label) === typed);
+    pick =
+      state.searchPool.find((t) => t.nt === typed || norm(t.label) === typed) ||
+      state.works.find((w) => w.nw === typed);
     if (!pick) {
       flash(el.guessInput);
       return;
     }
   }
-  if (pick.id === r.track.id) {
-    r.guesses.push({ kind: 'correct', label: pick.label });
+  const isWork = pick.kind === 'work';
+  const label = isWork ? pick.work : pick.label;
+  const byWork = !!r.track.nw && pick.nw === r.track.nw;
+  if ((!isWork && pick.id === r.track.id) || byWork) {
+    r.guesses.push({
+      kind: 'correct',
+      label,
+      // Remembered so the reveal can say how you got there.
+      ...(byWork && (isWork || pick.id !== r.track.id) ? { via: r.track.work } : {}),
+    });
     finish(true);
     return;
   }
-  advance({ kind: 'wrong', label: pick.label });
+  advance({ kind: 'wrong', label });
 }
 
 function skip() {
@@ -741,18 +861,22 @@ function finish(won, { silent = false, playable = true } = {}) {
   el.revealCard.style.setProperty('--c', c);
   el.revealCard.style.setProperty('--on-c', inkOn(c));
 
+  const last = r.guesses[r.guesses.length - 1];
   el.revealVerdict.textContent = won
-    ? `Got it at ${TIERS[r.guesses.length - 1]}s`
+    ? `Got it at ${TIERS[r.guesses.length - 1]}s${last?.via ? ` · knew it was ${last.via}` : ''}`
     : 'Out of guesses';
   el.revealTitle.textContent = t.title;
   el.revealArtist.textContent = t.artist;
-  el.revealAlbum.textContent = [t.media, t.album, t.year, pack?.name].filter(Boolean).join(' · ');
+  // The media line is redundant when the album title already says it
+  // ("Hades" · "Hades: Original Soundtrack").
+  const media = t.media && !norm(t.album).includes(t.nm) ? t.media : '';
+  el.revealAlbum.textContent = [media, t.album, t.year, pack?.name].filter(Boolean).join(' · ');
   el.revealArt.src = t.artwork || '';
   el.revealArt.hidden = !t.artwork;
   el.revealLink.href = t.storeUrl;
 
-  if (!silent && state.mode === 'daily') {
-    store.set('daily.' + todayKey(), {
+  if (!silent && state.mode === 'daily' && state.daily) {
+    store.set(dailyKey(state.daily.pack.id, state.daily.date), {
       id: t.id,
       guesses: r.guesses,
       tier: r.tier,
@@ -763,8 +887,12 @@ function finish(won, { silent = false, playable = true } = {}) {
   el.nextBtn.hidden = state.mode === 'daily';
   el.dailyNote.hidden = state.mode !== 'daily';
   if (state.mode === 'daily') {
-    el.dailyNote.textContent =
-      'That is today’s. A new crate opens tomorrow, or head to Endless to keep going.';
+    const others = playablePacks().filter(
+      (p) => p.id !== state.daily?.pack.id && !dailyResult(p.id, state.daily.date)
+    ).length;
+    el.dailyNote.textContent = others
+      ? `That is today’s ${state.daily.pack.name}. ${others} more dail${others === 1 ? 'y' : 'ies'} left today, or head to Endless.`
+      : 'That is the last daily for today. New songs at midnight, or head to Endless to keep going.';
   }
 }
 
@@ -778,24 +906,33 @@ function shareText() {
   const pack = packMeta(r.track.packId);
   const head =
     state.mode === 'daily'
-      ? `Earworm ${todayKey()} · ${pack?.name || ''}`
+      ? `Earworm ${state.daily?.date || todayKey()} · ${pack?.name || ''}`
       : `Earworm · ${pack?.name || ''} · ${DIFFICULTIES.find((d) => d.id === state.difficulty).name}`;
   return `${head}\n${squares}\n${r.won ? `${TIERS[r.guesses.length - 1]}s` : 'X'}`;
 }
 
 /* ------------------------------------------------------------- autocomplete */
 
+const MAX_SUGGEST = 8;
+const MAX_WORKS = 3;
+
 function updateSuggestions() {
   const q = norm(el.guessInput.value);
   if (!q) return closeSuggestions();
+  // Works first: "naruto" should offer Naruto itself before its dozen themes.
+  // Prefix hits beat substring hits; within each, the work with more songs is
+  // the one more people mean.
+  const works = state.works
+    .filter((w) => w.nw.includes(q))
+    .sort((a, b) => b.nw.startsWith(q) - a.nw.startsWith(q) || b.count - a.count);
   const starts = [];
   const contains = [];
   for (const t of state.searchPool) {
     if (t.nt.startsWith(q) || t.na.startsWith(q) || t.nm.startsWith(q)) starts.push(t);
     else if (t.nt.includes(q) || t.na.includes(q) || t.nm.includes(q)) contains.push(t);
-    if (starts.length >= 8) break;
+    if (starts.length >= MAX_SUGGEST) break;
   }
-  state.matches = [...starts, ...contains].slice(0, 8);
+  state.matches = [...works.slice(0, MAX_WORKS), ...starts, ...contains].slice(0, MAX_SUGGEST);
   state.hi = state.matches.length ? 0 : -1;
   renderSuggestions();
 }
@@ -803,14 +940,18 @@ function updateSuggestions() {
 function renderSuggestions() {
   if (!state.matches.length) return closeSuggestions();
   el.suggest.innerHTML = state.matches
-    .map(
-      (t, i) =>
-        `<li role="option" id="sug-${i}" aria-selected="${i === state.hi}" class="${
-          i === state.hi ? 'hi' : ''
-        }" data-i="${i}"><strong>${escapeHtml(t.title)}</strong><span>${escapeHtml(
-          t.media || t.artist
-        )}</span></li>`
-    )
+    .map((t, i) => {
+      const cls = (i === state.hi ? 'hi' : '') + (t.kind === 'work' ? ' work' : '');
+      const main = t.kind === 'work' ? t.work : t.title;
+      const side =
+        t.kind === 'work'
+          ? `${packMeta(t.packId)?.name || ''} · ${t.count} song${t.count === 1 ? '' : 's'}`
+          : t.media || t.artist;
+      return (
+        `<li role="option" id="sug-${i}" aria-selected="${i === state.hi}" class="${cls.trim()}"` +
+        ` data-i="${i}"><strong>${escapeHtml(main)}</strong><span>${escapeHtml(side)}</span></li>`
+      );
+    })
     .join('');
   el.suggest.hidden = false;
   el.guessInput.setAttribute('aria-expanded', 'true');
@@ -830,7 +971,7 @@ function choose(i) {
   const t = state.matches[i];
   if (!t) return;
   state.pending = t;
-  el.guessInput.value = t.label;
+  el.guessInput.value = t.kind === 'work' ? t.work : t.label;
   closeSuggestions();
   el.submitBtn.disabled = false;
   el.guessInput.focus();
@@ -877,9 +1018,10 @@ function bind() {
     game: $('#game'),
     breadcrumb: $('#breadcrumb'),
     goHome: $('#go-home'),
-    pickDaily: $('#pick-daily'),
+    dailyList: $('#daily-list'),
+    dailyDate: $('#daily-date'),
+    dailyBlurb: $('#daily-blurb'),
     pickEndless: $('#pick-endless'),
-    dailyCrate: $('#daily-crate'),
     endlessCount: $('#endless-count'),
     packChips: $('#pack-chips'),
     difficulty: $('#difficulty'),
@@ -928,10 +1070,6 @@ function bind() {
     show('home');
   });
 
-  el.pickDaily.addEventListener('click', () => {
-    player.unlock();
-    startDaily();
-  });
   el.pickEndless.addEventListener('click', () => {
     renderCrate();
     renderDifficulty();
@@ -1034,9 +1172,28 @@ function bind() {
     b.addEventListener('click', () => b.closest('dialog')?.close());
   }
 
+  // Clicking the scrim closes a modal. A click on the backdrop is delivered
+  // to the <dialog> itself, but so is a click on its own padding, so the test
+  // is geometric: outside the box, not merely "target is the dialog".
+  for (const dlg of document.querySelectorAll('dialog')) {
+    dlg.addEventListener('click', (e) => {
+      if (!dlg.open || e.target !== dlg) return;
+      const r = dlg.getBoundingClientRect();
+      const inside =
+        e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      if (!inside) dlg.close();
+    });
+  }
+
   el.revealDlg.addEventListener('close', () => {
     if (el.reveal.parentElement === el.revealDlg) el.game.append(el.reveal);
     el.viewBoard.hidden = true; // pointless once the board is already visible
+  });
+
+  // Day rollover while the tab is open. See rollover().
+  armMidnight();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') rollover();
   });
 
   bindScrub();
