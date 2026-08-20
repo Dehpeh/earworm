@@ -620,11 +620,13 @@ async function startDaily(pack) {
     el.status.textContent = 'Could not load the song data.';
     return;
   }
-  // The daily is not tuned to your preferences, but it is one shot, so it
-  // draws from easy and medium: a puzzle everyone gets exactly one go at
-  // should be one most people can get. Hard stays in Endless. (Falls back to
-  // the whole pack if a pack somehow has nothing below hard.)
-  const gettable = state.searchPool.filter((t) => t.difficulty < 3);
+  // The daily draws from the easy band only: it is one shot, the same for
+  // everyone, and a one-shot puzzle should be a song most people can get.
+  // Easy is each pack's top 15% — the actual hits — which is still 200+ songs
+  // per crate, most of a year before the walk repeats. Medium and hard stay
+  // in Endless. (Falls back down the bands if a pack somehow has no easy.)
+  const easy = state.searchPool.filter((t) => t.difficulty === 1);
+  const gettable = easy.length ? easy : state.searchPool.filter((t) => t.difficulty < 3);
   state.pool = gettable.length ? gettable : state.searchPool;
 
   const saved = dailyResult(pack.id, state.daily.date);

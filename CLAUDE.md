@@ -297,8 +297,9 @@ Previews are 30s, so 16s is the practical ceiling for the tier ladder.
 The two modes are genuinely different, not two shuffles of the same thing:
 
 - **Daily** is one song *per genre* per day, one attempt each, drawn from the
-  easy and medium bands (one shot at a hard-band B-side is not a puzzle, it is
-  a coin you cannot win), saved under `earworm.daily.<date>.<packId>`. The home
+  easy band only (one shot, the same for everyone — it should be a song most
+  people can get; easy is still 200+ songs per crate, most of a year before
+  the walk repeats), saved under `earworm.daily.<date>.<packId>`. The home
   screen is a tile per crate; opening a played tile replays its reveal.
 - **Endless** is the one that reads your crate selection and difficulty, avoids
   the last 200 songs you saw, and never ends.
