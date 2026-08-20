@@ -206,8 +206,22 @@ function dailyKey(packId, date) {
   return `daily.${date}.${packId}`;
 }
 
+/**
+ * Bump this to void every daily result saved before it — the one-time reset
+ * for when the deal itself changes (the easy-band switch shipped mid-day and
+ * had already dealt people medium/hard songs). Results save the epoch; a
+ * result from an older epoch reads as "not played", so the tile re-deals
+ * from the current pool. There is no backend, so this is what "refresh
+ * everyone" means here.
+ */
+const DAILY_EPOCH = 2;
+
+/** How deep into a pack's most-streamed-first order the daily may deal. */
+const DAILY_POOL = 100;
+
 function dailyResult(packId, date = todayKey()) {
-  return store.get(dailyKey(packId, date), null);
+  const res = store.get(dailyKey(packId, date), null);
+  return res && res.v === DAILY_EPOCH ? res : null;
 }
 
 /** Candidate order for a pack's daily: today's entry first, then walk on. */
@@ -620,14 +634,12 @@ async function startDaily(pack) {
     el.status.textContent = 'Could not load the song data.';
     return;
   }
-  // The daily draws from the easy band only: it is one shot, the same for
-  // everyone, and a one-shot puzzle should be a song most people can get.
-  // Easy is each pack's top 15% — the actual hits — which is still 200+ songs
-  // per crate, most of a year before the walk repeats. Medium and hard stay
-  // in Endless. (Falls back down the bands if a pack somehow has no easy.)
-  const easy = state.searchPool.filter((t) => t.difficulty === 1);
-  const gettable = easy.length ? easy : state.searchPool.filter((t) => t.difficulty < 3);
-  state.pool = gettable.length ? gettable : state.searchPool;
+  // The daily deals only from the crate's biggest hits: the first DAILY_POOL
+  // tracks of the pack, which rank-songs.mjs writes most-streamed first (the
+  // personal pack is saved in popularity order too). One shot, the same for
+  // everyone — it should be a song nearly everyone would know. The walk
+  // repeats after DAILY_POOL days, which is the price of keeping it easy.
+  state.pool = state.searchPool.slice(0, DAILY_POOL);
 
   const saved = dailyResult(pack.id, state.daily.date);
   if (saved) {
@@ -1104,6 +1116,7 @@ function finish(won, { silent = false, playable = true } = {}) {
 
   if (!silent && state.mode === 'daily' && state.daily) {
     store.set(dailyKey(state.daily.pack.id, state.daily.date), {
+      v: DAILY_EPOCH,
       id: t.id,
       guesses: r.guesses,
       tier: r.tier,

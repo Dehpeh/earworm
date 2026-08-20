@@ -161,6 +161,13 @@ function reband(tracks, ranks) {
   scored.forEach((s, i) => {
     s.t.d = i < easyEnd ? 1 : i < mediumEnd ? 2 : 3;
   });
+  // The pack file itself is written in this order, most-streamed first. The
+  // game leans on that: the daily deals from the first slice of the file (the
+  // crate's genuine hits), which a band flag alone cannot express. Endless
+  // shuffles and the daily walk sorts by id first, so order carries no bias
+  // anywhere else.
+  tracks.length = 0;
+  tracks.push(...scored.map((s) => s.t));
   return scored;
 }
 

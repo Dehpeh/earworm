@@ -226,7 +226,10 @@ and Cocteau Twins B-sides at the tail — nobody gets 80% of those. Easy is mean
 to be each artist's actual hits; the target is roughly 80-90% / 50% / 20%
 success for someone who knows the genre. `--reband` re-cuts from cache in
 seconds and also refreshes the per-band counts in `index.json`, which is where
-the picker reads them from.
+the picker reads them from. Since the hits retune, `reband()` also **writes the
+pack file itself most-streamed first** — the daily deals from the head of the
+file, which a band flag alone cannot express. Order carries no bias anywhere
+else: Endless shuffles and the daily walk sorts by id before seeding.
 
 The Deezer cache lives in `tools/cache/deezer/`, gitignored like the rest. A
 cold re-rank is ~12k lookups; Deezer allows ~10/s, so run the packs as parallel
@@ -297,9 +300,12 @@ Previews are 30s, so 16s is the practical ceiling for the tier ladder.
 The two modes are genuinely different, not two shuffles of the same thing:
 
 - **Daily** is one song *per genre* per day, one attempt each, drawn from the
-  easy band only (one shot, the same for everyone — it should be a song most
-  people can get; easy is still 200+ songs per crate, most of a year before
-  the walk repeats), saved under `earworm.daily.<date>.<packId>`. The home
+  first `DAILY_POOL` (100) tracks of the pack — the crate's most-streamed
+  songs, since `rank-songs.mjs` writes each pack most-streamed first. One
+  shot, the same for everyone: it should be a song nearly everyone knows. The
+  walk repeats after 100 days, the accepted price of keeping it easy. Saved
+  under `earworm.daily.<date>.<packId>`; `DAILY_EPOCH` on the save voids
+  results from before a mid-day change to how the daily deals. The home
   screen is a tile per crate; opening a played tile replays its reveal.
 - **Endless** is the one that reads your crate selection and difficulty, avoids
   the last 200 songs you saw, and never ends.

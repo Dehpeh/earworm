@@ -258,8 +258,8 @@ the reveal, where the answer appears as its own crate's folder.
 
 ## Modes, keys and storage
 
-**Daily** is one song per genre per day, drawn from the easy band — the hits.
-You get one attempt per genre; reopening a played tile shows what you got. Each
+**Daily** is one song per genre per day, drawn from the crate's 100
+most-streamed songs — the real hits. You get one attempt per genre; reopening a played tile shows what you got. Each
 genre walks a fixed shuffle of its pack one entry per day, so a song does not
 come round again until the whole pack has. Everything rolls over at local
 midnight, even in a tab left open. **Endless** reads your crate selection and
